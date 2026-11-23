@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '8';
+const APP_VERSION = '9';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -449,7 +449,7 @@ function drawPhoto(el, state) {
     const file = e.target.files[0]; if (!file) return;
     const out = document.getElementById('aiOut'); out.innerHTML = '';
     try {
-      imgData = await resizeImage(file, 1280);
+      imgData = await resizeImage(file, 1024);
       const p = document.getElementById('prev'); p.src = 'data:image/jpeg;base64,' + imgData; p.classList.remove('hidden');
       document.getElementById('estBtn').disabled = false;
     } catch (err) { out.innerHTML = `<div class="warnbox">${esc(err.message)}</div>`; }
@@ -459,7 +459,7 @@ function drawPhoto(el, state) {
   document.getElementById('photoIn').onchange = onPick;
   document.getElementById('estBtn').onclick = async () => {
     const out = document.getElementById('aiOut');
-    out.innerHTML = '<div class="spinner"></div><p class="center small muted">Estimating…</p>';
+    out.innerHTML = '<div class="spinner"></div><p class="center small muted" id="aiStatus">Estimating…</p>';
     document.getElementById('estBtn').disabled = true;
     try {
       const res = await estimateFood(imgData, document.getElementById('hint').value);
@@ -478,7 +478,7 @@ function resizeImage(file, max) {
       const c = document.createElement('canvas'); c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(img.src);
-      resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      resolve(c.toDataURL('image/jpeg', 0.8).split(',')[1]);
     };
     img.onerror = () => reject(new Error('Could not read that photo. Try another one, or take a new photo.'));
     img.src = URL.createObjectURL(file);
@@ -506,40 +506,60 @@ const estimateFood = (b64, hint) => S.settings.aiProvider === 'claude' ? estimat
 // Google Gemini (free tier available at aistudio.google.com)
 // Free-tier models are often "overloaded" (503). We retry with backoff, then try other Flash models.
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const aiStatus = msg => { const el = document.getElementById('aiStatus'); if (el) el.textContent = msg; };
 // fetch() that turns network failures ("Load failed" on iPhone) into a readable message
 async function apiFetch(url, opts, who) {
   try { return await fetch(url, opts); }
   catch { throw new Error(`Couldn't reach ${who}. Check your internet connection and try again.`); }
 }
-async function callGemini(model, b64, prompt) {
-  const resp = await apiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': S.settings.geminiKey },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json' },
-    }),
-  }, 'Google Gemini');
-  const data = await resp.json().catch(() => ({}));
-  return { status: resp.status, ok: resp.ok, data, msg: data?.error?.message || resp.statusText };
+// Keep "thinking" low: food estimates don't need deep reasoning, and it's the main source of delay.
+function thinkingFor(model) {
+  if (/^gemini-2\.5-flash/.test(model)) return { thinkingBudget: 0 };
+  if (/^gemini-[3-9]/.test(model)) return { thinkingLevel: 'low' };
+  return null;
+}
+async function callGemini(model, b64, prompt, think = true) {
+  const tc = think ? thinkingFor(model) : null;
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const resp = await apiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': S.settings.geminiKey },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', ...(tc ? { thinkingConfig: tc } : {}) },
+      }),
+    }, 'Google Gemini');
+    const data = await resp.json().catch(() => ({}));
+    const r = { status: resp.status, ok: resp.ok, data, msg: data?.error?.message || resp.statusText, model };
+    // Older/other models may reject the thinking setting: retry once without it
+    if (tc && r.status === 400 && /think/i.test(r.msg)) return callGemini(model, b64, prompt, false);
+    return r;
+  } catch (e) {
+    if (ctrl.signal.aborted) return { status: 504, ok: false, data: {}, msg: 'timed out', model };
+    throw e;
+  } finally { clearTimeout(timer); }
 }
 async function estimateGemini(b64, hint) {
   const prompt = foodPrompt(hint) + ` Reply with JSON only, matching this shape: {"items":[{"name":string,"portion":string,"kcal":number,"protein_g":number,"carbs_g":number,"fat_g":number}],"total_kcal":number,"confidence":"low"|"medium"|"high","notes":string}`;
   const busy = s => s === 500 || s === 503 || s === 504;
   let model = S.settings.geminiModel || 'gemini-3.1-flash-lite';
-  let r = null;
-  for (const wait of [0, 1500, 4000]) { if (wait) await sleep(wait); r = await callGemini(model, b64, prompt); if (!busy(r.status)) break; }
+  const t0 = Date.now();
+  aiStatus(`Asking ${model}…`);
+  let r = await callGemini(model, b64, prompt);
   // Model retired: switch to a current Flash model for good.
   if (r.status === 404) {
     const alt = (await geminiModels()).find(m => m !== model);
     if (alt) { model = alt; S.settings.geminiModel = alt; save(); r = await callGemini(model, b64, prompt); }
   }
-  // Still overloaded: try up to two other Flash models just for this photo.
+  // Busy or slow: try up to two other Flash models right away, then the original once more.
   if (busy(r.status)) {
     for (const alt of (await geminiModels()).filter(m => m !== model).slice(0, 2)) {
+      aiStatus(`${model} is busy. Trying ${alt}…`);
       r = await callGemini(alt, b64, prompt); if (!busy(r.status)) break;
     }
   }
+  if (busy(r.status)) { aiStatus('All busy. Retrying in a moment…'); await sleep(2000); r = await callGemini(model, b64, prompt); }
   if (!r.ok) {
     if (r.status === 400 && /API key/i.test(r.msg) || r.status === 403) throw new Error('Your Gemini API key was rejected. Check it in Settings.');
     if (r.status === 429) throw new Error('Gemini free-tier limit reached. Wait a bit and try again, or use Quick add.');
@@ -548,7 +568,9 @@ async function estimateGemini(b64, hint) {
   }
   const text = (r.data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
   if (!text) throw new Error('Gemini returned no estimate for this photo. Try again or use Quick add.');
-  return parseFoodJSON(text);
+  const res = parseFoodJSON(text);
+  res.via = `${r.model} · ${Math.round((Date.now() - t0) / 1000)}s`;
+  return res;
 }
 // Current Flash models that accept images, lite first (they have the most generous free limits).
 async function geminiModels() {
@@ -610,7 +632,7 @@ function renderAIResult(out, res, state) {
       <h3 style="margin-top:14px">Estimate <span class="pill ${res.confidence === 'high' ? 'green' : res.confidence === 'low' ? 'amber' : ''}">${esc(res.confidence)} confidence</span></h3>
       ${items.map((it, n) => `<div class="ai-item"><div class="row"><input value="${esc(it.name)}" data-n="${n}" data-f="name" class="grow"><input type="number" inputmode="numeric" value="${Math.round(it.kcal)}" data-n="${n}" data-f="kcal" style="width:80px"><span class="small muted">kcal</span><button class="icon" data-del="${n}">✕</button></div>
         <div class="small muted" style="margin-top:4px">${esc(it.portion)} · P ${Math.round(it.protein_g)}g · C ${Math.round(it.carbs_g)}g · F ${Math.round(it.fat_g)}g</div></div>`).join('')}
-      <p class="small muted">${esc(res.notes)}</p>
+      <p class="small muted">${esc(res.notes)}${res.via ? ` <span style="opacity:.6">(${esc(res.via)})</span>` : ''}</p>
       <div class="row between"><b>Total</b><b id="aiTot">${sumKcal(items)} kcal</b></div>
       <button class="btn primary" id="aiLog" style="margin-top:10px">Log ${items.length} item${items.length === 1 ? '' : 's'}</button>`;
     out.querySelectorAll('input[data-n]').forEach(inp => inp.oninput = () => { const it = items[+inp.dataset.n]; it[inp.dataset.f] = inp.dataset.f === 'kcal' ? +inp.value : inp.value; document.getElementById('aiTot').textContent = sumKcal(items) + ' kcal'; });
