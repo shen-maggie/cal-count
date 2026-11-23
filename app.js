@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '3';
+const APP_VERSION = '4';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -393,9 +393,9 @@ function foodPrompt(hint) {
 const estimateFood = (b64, hint) => S.settings.aiProvider === 'claude' ? estimateClaude(b64, hint) : estimateGemini(b64, hint);
 
 // Google Gemini (free tier available at aistudio.google.com)
-async function estimateGemini(b64, hint, retried = false) {
-  const model = S.settings.geminiModel || 'gemini-3.1-flash-lite';
-  const prompt = foodPrompt(hint) + ` Reply with JSON only, matching this shape: {"items":[{"name":string,"portion":string,"kcal":number,"protein_g":number,"carbs_g":number,"fat_g":number}],"total_kcal":number,"confidence":"low"|"medium"|"high","notes":string}`;
+// Free-tier models are often "overloaded" (503). We retry with backoff, then try other Flash models.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function callGemini(model, b64, prompt) {
   const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': S.settings.geminiKey },
@@ -405,25 +405,43 @@ async function estimateGemini(b64, hint, retried = false) {
     }),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    // Model names change over time: if ours is gone, pick a current Flash model and retry once.
-    if (resp.status === 404 && !retried) { const m = await pickGeminiModel(); if (m && m !== model) { S.settings.geminiModel = m; save(); return estimateGemini(b64, hint, true); } }
-    const msg = data?.error?.message || resp.statusText;
-    if (resp.status === 400 && /API key/i.test(msg) || resp.status === 403) throw new Error('Your Gemini API key was rejected. Check it in Settings.');
-    if (resp.status === 429) throw new Error('Gemini free-tier limit reached. Wait a bit and try again, or use Quick add.');
-    throw new Error(`AI request failed (${resp.status}): ${msg}`);
+  return { status: resp.status, ok: resp.ok, data, msg: data?.error?.message || resp.statusText };
+}
+async function estimateGemini(b64, hint) {
+  const prompt = foodPrompt(hint) + ` Reply with JSON only, matching this shape: {"items":[{"name":string,"portion":string,"kcal":number,"protein_g":number,"carbs_g":number,"fat_g":number}],"total_kcal":number,"confidence":"low"|"medium"|"high","notes":string}`;
+  const busy = s => s === 500 || s === 503 || s === 504;
+  let model = S.settings.geminiModel || 'gemini-3.1-flash-lite';
+  let r = null;
+  for (const wait of [0, 1500, 4000]) { if (wait) await sleep(wait); r = await callGemini(model, b64, prompt); if (!busy(r.status)) break; }
+  // Model retired: switch to a current Flash model for good.
+  if (r.status === 404) {
+    const alt = (await geminiModels()).find(m => m !== model);
+    if (alt) { model = alt; S.settings.geminiModel = alt; save(); r = await callGemini(model, b64, prompt); }
   }
-  const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+  // Still overloaded: try up to two other Flash models just for this photo.
+  if (busy(r.status)) {
+    for (const alt of (await geminiModels()).filter(m => m !== model).slice(0, 2)) {
+      r = await callGemini(alt, b64, prompt); if (!busy(r.status)) break;
+    }
+  }
+  if (!r.ok) {
+    if (r.status === 400 && /API key/i.test(r.msg) || r.status === 403) throw new Error('Your Gemini API key was rejected. Check it in Settings.');
+    if (r.status === 429) throw new Error('Gemini free-tier limit reached. Wait a bit and try again, or use Quick add.');
+    if (busy(r.status)) throw new Error('Google\'s free Gemini servers are busy right now. Try again in a minute, or use Quick add.');
+    throw new Error(`AI request failed (${r.status}): ${r.msg}`);
+  }
+  const text = (r.data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
   if (!text) throw new Error('Gemini returned no estimate for this photo. Try again or use Quick add.');
   return parseFoodJSON(text);
 }
-async function pickGeminiModel() {
+// Current Flash models that accept images, lite first (they have the most generous free limits).
+async function geminiModels() {
   try {
     const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': S.settings.geminiKey } });
     const ms = ((await r.json()).models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => m.name.replace('models/', ''));
-    const flash = ms.filter(n => /flash/.test(n) && !/image|tts|audio|live|exp|preview/.test(n));
-    return (flash.find(n => /lite/.test(n)) || flash[0] || ms[0]);
-  } catch { return null; }
+    const flash = ms.filter(n => /flash/.test(n) && !/image|tts|audio|live|exp|preview|embed/.test(n));
+    return [...flash.filter(n => /lite/.test(n)), ...flash.filter(n => !/lite/.test(n))];
+  } catch { return []; }
 }
 function parseFoodJSON(text) {
   try {
