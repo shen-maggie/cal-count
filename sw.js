@@ -1,5 +1,5 @@
 // Offline-first cache for the app shell. Bump VERSION when you change files so phones pick up updates.
-const VERSION = 'fastcal-v2';
+const VERSION = 'fastcal-v3';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.json', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -11,8 +11,8 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return; // never cache API calls
-  // Network first so updates show up quickly; fall back to cache offline.
-  e.respondWith(fetch(e.request).then(res => {
+  // Network first (revalidating past the browser's HTTP cache) so updates show up right away; cache is the offline fallback.
+  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(res => {
     const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); return res;
   }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('index.html'))));
 });
