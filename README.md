@@ -12,7 +12,11 @@ Calorie tracking + intermittent fasting, as an installable web app (PWA). No ser
 Open that link in **Safari** → Share → **Add to Home Screen**. Open it from the Home Screen icon, then go to Settings → Enable notifications.
 
 ## AI photo logging
-Settings → paste an Anthropic API key (console.anthropic.com). It's stored only on your phone and sent only to Anthropic.
+Settings → AI photo logging. Pick a provider:
+- **Google Gemini (free tier)**: get a key at aistudio.google.com. Free-tier inputs may be used by Google to improve its products.
+- **Anthropic Claude (paid, ~1–2¢ per photo)**: get a key at console.anthropic.com.
+
+Keys are stored only on your phone and sent only to that provider.
 
 ## Updating
 After editing files, bump `VERSION` in `sw.js` so phones pick up the new version.

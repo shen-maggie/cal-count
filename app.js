@@ -18,7 +18,10 @@ const DEFAULT_STATE = {
     streakFreeze: true,
     reminders: true,
     weightUnit: 'lb',
-    apiKey: '',
+    aiProvider: 'gemini',       // 'gemini' (free tier) or 'claude' (paid API)
+    geminiKey: '',
+    geminiModel: 'gemini-3.1-flash-lite',
+    apiKey: '',                 // Anthropic key
     aiModel: 'claude-opus-5-5',
   },
   fasts: [],        // {id, start, end|null, goalH}
@@ -320,10 +323,11 @@ function drawLibraryPick(el, state) {
   draw(''); document.getElementById('libSearch').oninput = e => draw(e.target.value);
 }
 
-// ---------- AI photo estimation (Claude API, called directly from the browser) ----------
+// ---------- AI photo estimation (Gemini or Claude API, called directly from the browser) ----------
+const aiKey = () => S.settings.aiProvider === 'claude' ? S.settings.apiKey : S.settings.geminiKey;
 function drawPhoto(el, state) {
-  if (!S.settings.apiKey) {
-    el.innerHTML = `<p class="muted">To use AI photo estimates, add your Anthropic API key in Settings. It stays on this device only.</p><button class="btn" id="goSet">Open Settings</button>`;
+  if (!aiKey()) {
+    el.innerHTML = `<p class="muted">To use AI photo estimates, add a ${S.settings.aiProvider === 'claude' ? 'Anthropic' : 'free Google Gemini'} API key in Settings. It stays on this device only.</p><button class="btn" id="goSet">Open Settings</button>`;
     document.getElementById('goSet').onclick = () => { closeSheet(); tab = 'settings'; render(); };
     return;
   }
@@ -380,10 +384,58 @@ const FOOD_SCHEMA = {
   },
 };
 
-async function estimateFood(b64, hint) {
-  const prompt = `Identify each food in this photo and estimate its portion size and nutrition. ` +
+function foodPrompt(hint) {
+  return `Identify each food in this photo and estimate its portion size and nutrition. ` +
     (hint.trim() ? `The user gave these measurements, which you should trust over visual estimates: "${hint.trim()}". ` : `No measurements were given, so estimate portions from visual cues such as plate and utensil size. `) +
     `Be realistic about hidden calories (oil, butter, sauces, dressings). In notes, say in one short sentence what most affects accuracy.`;
+}
+const estimateFood = (b64, hint) => S.settings.aiProvider === 'claude' ? estimateClaude(b64, hint) : estimateGemini(b64, hint);
+
+// Google Gemini (free tier available at aistudio.google.com)
+async function estimateGemini(b64, hint, retried = false) {
+  const model = S.settings.geminiModel || 'gemini-3.1-flash-lite';
+  const prompt = foodPrompt(hint) + ` Reply with JSON only, matching this shape: {"items":[{"name":string,"portion":string,"kcal":number,"protein_g":number,"carbs_g":number,"fat_g":number}],"total_kcal":number,"confidence":"low"|"medium"|"high","notes":string}`;
+  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': S.settings.geminiKey },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: prompt }] }],
+      generationConfig: { responseMimeType: 'application/json' },
+    }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    // Model names change over time: if ours is gone, pick a current Flash model and retry once.
+    if (resp.status === 404 && !retried) { const m = await pickGeminiModel(); if (m && m !== model) { S.settings.geminiModel = m; save(); return estimateGemini(b64, hint, true); } }
+    const msg = data?.error?.message || resp.statusText;
+    if (resp.status === 400 && /API key/i.test(msg) || resp.status === 403) throw new Error('Your Gemini API key was rejected. Check it in Settings.');
+    if (resp.status === 429) throw new Error('Gemini free-tier limit reached. Wait a bit and try again, or use Quick add.');
+    throw new Error(`AI request failed (${resp.status}): ${msg}`);
+  }
+  const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+  if (!text) throw new Error('Gemini returned no estimate for this photo. Try again or use Quick add.');
+  return parseFoodJSON(text);
+}
+async function pickGeminiModel() {
+  try {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': S.settings.geminiKey } });
+    const ms = ((await r.json()).models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => m.name.replace('models/', ''));
+    const flash = ms.filter(n => /flash/.test(n) && !/image|tts|audio|live|exp|preview/.test(n));
+    return (flash.find(n => /lite/.test(n)) || flash[0] || ms[0]);
+  } catch { return null; }
+}
+function parseFoodJSON(text) {
+  try {
+    const j = JSON.parse(text.replace(/^```(json)?|```$/gm, '').trim());
+    j.items = (j.items || []).map(i => ({ name: i.name || 'Food', portion: i.portion || '', kcal: +i.kcal || 0, protein_g: +i.protein_g || 0, carbs_g: +i.carbs_g || 0, fat_g: +i.fat_g || 0 }));
+    j.confidence = j.confidence || 'medium'; j.notes = j.notes || '';
+    return j;
+  } catch { throw new Error('Could not read the AI response. Try again.'); }
+}
+
+// Anthropic Claude (paid API)
+async function estimateClaude(b64, hint) {
+  const prompt = foodPrompt(hint);
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -413,7 +465,7 @@ async function estimateFood(b64, hint) {
   }
   if (data.stop_reason === 'refusal') throw new Error('The AI declined to estimate this photo. Try Quick add instead.');
   const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  try { return JSON.parse(text); } catch { throw new Error('Could not read the AI response. Try again.'); }
+  return parseFoodJSON(text);
 }
 
 function renderAIResult(out, res, state) {
@@ -612,9 +664,15 @@ function renderSettings() {
       <p class="small muted">After you log your last meal of the day (${mealLabel(lastMainMeal())}), you'll be asked to start your fast.</p></div>
     <div class="card"><h2>Weight</h2><label>Unit</label><select id="sUnit"><option ${st.weightUnit === 'lb' ? 'selected' : ''}>lb</option><option ${st.weightUnit === 'kg' ? 'selected' : ''}>kg</option></select></div>
     <div class="card"><h2>AI photo logging</h2>
+      <label>AI provider</label><select id="sProv"><option value="gemini" ${st.aiProvider !== 'claude' ? 'selected' : ''}>Google Gemini (free tier)</option><option value="claude" ${st.aiProvider === 'claude' ? 'selected' : ''}>Anthropic Claude (paid, ~1–2¢/photo)</option></select>
+      ${st.aiProvider === 'claude' ? `
       <label>Anthropic API key</label><input type="password" id="sKey" value="${esc(st.apiKey)}" placeholder="sk-ant-…" autocomplete="off">
-      <p class="small muted">Get one at console.anthropic.com. Stored only on this device and sent only to Anthropic. Each photo costs roughly a cent or two.</p>
-      <label>Model</label><select id="sModel">${[['claude-opus-5-5', 'Claude Opus 5.5 (most accurate)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (cheaper)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)']].map(([v, l]) => `<option value="${v}" ${st.aiModel === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <p class="small muted">Get one at console.anthropic.com. Stored only on this device and sent only to Anthropic.</p>
+      <label>Model</label><select id="sModel">${[['claude-opus-5-5', 'Claude Opus 5.5 (most accurate)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (cheaper)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)']].map(([v, l]) => `<option value="${v}" ${st.aiModel === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : `
+      <label>Gemini API key</label><input type="password" id="sGKey" value="${esc(st.geminiKey)}" placeholder="AIza…" autocomplete="off">
+      <p class="small muted">Free key at aistudio.google.com (no card needed). Stored only on this device and sent only to Google. Free-tier photos may be used by Google to improve its products.</p>
+      <label>Model</label><input id="sGModel" value="${esc(st.geminiModel)}" autocomplete="off" autocapitalize="off">
+      <p class="small muted">If this model is retired, the app switches to a current Flash model automatically.</p>`}</div>
     <div class="card"><h2>Data</h2><p class="small muted">Everything is stored on this phone only. Export a backup now and then.</p>
       <div class="btn-grid"><button class="btn" id="sExp">Export backup</button><label class="btn" style="text-align:center;margin:0;color:var(--text);font-size:16px">Import<input type="file" accept="application/json" id="sImp" class="hidden"></label></div>
       <button class="btn danger" id="sWipe" style="margin-top:8px">Erase all data</button></div>`;
@@ -625,8 +683,12 @@ function renderSettings() {
   document.getElementById('sFreeze').onchange = e => set('streakFreeze', e.target.checked);
   document.getElementById('sGoal').onchange = e => set('calorieGoal', +e.target.value || 1800);
   document.getElementById('sUnit').onchange = e => set('weightUnit', e.target.value);
-  document.getElementById('sKey').onchange = e => set('apiKey', e.target.value.trim());
-  document.getElementById('sModel').onchange = e => set('aiModel', e.target.value);
+  document.getElementById('sProv').onchange = e => { set('aiProvider', e.target.value); render(); };
+  const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
+  bind('sKey', e => set('apiKey', e.target.value.trim()));
+  bind('sModel', e => set('aiModel', e.target.value));
+  bind('sGKey', e => set('geminiKey', e.target.value.trim()));
+  bind('sGModel', e => set('geminiModel', e.target.value.trim() || 'gemini-3.1-flash-lite'));
   view.querySelectorAll('[data-meal]').forEach(c => c.onchange = () => {
     st.meals[c.dataset.meal] = c.checked;
     if (!enabledMeals().length) { st.meals[c.dataset.meal] = true; c.checked = true; return toast('Keep at least one meal'); }
