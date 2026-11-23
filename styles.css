@@ -1,21 +1,23 @@
 /* Cozy, hand-drawn look: warm paper background, ink outlines, sticker-like offset shadows. */
 :root {
-  --bg: #f7efe1;          /* warm paper */
-  --card: #fffaf2;        /* card paper */
-  --card2: #f3e6d0;       /* tan, buttons / chips */
-  --track: #eedfc8;       /* ring & bar tracks */
-  --ink: #5b3d2e;         /* outline brown */
-  --text: #4a3228;
-  --muted: #9b8172;
-  --line-soft: #e8d8c0;
-  --accent: #86ad63;      /* leaf green */
-  --accent-ink: #2f4a1f;
-  --accent2: #8fd0e2;     /* sky blue */
-  --accent2-ink: #1f4752;
-  --berry: #e8616b;       /* strawberry */
-  --berry-soft: #f9dfd6;
-  --warn: #d99a2b;
-  --danger: #d9605a;
+  --bg: #8b6f63;          /* cocoa */
+  --bg-line: rgba(255,240,220,.07);
+  --on-bg: #f4e8d6;       /* text sitting directly on the cocoa background */
+  --card: #f1e4cf;        /* cream card */
+  --card2: #e3cfb2;       /* tan, buttons / chips */
+  --track: #dcc6a6;       /* ring & bar tracks */
+  --ink: #4a3329;         /* outline brown */
+  --text: #4a3329;
+  --muted: #8a6f60;
+  --line-soft: #d8c3a3;
+  --accent: #9aa86f;      /* muted sage */
+  --accent-ink: #2c3516;
+  --accent2: #a9c2c4;     /* dusty blue */
+  --accent2-ink: #233d40;
+  --berry: #d3715d;       /* terracotta strawberry */
+  --berry-soft: #f0d2c2;
+  --warn: #d4913a;
+  --danger: #b9503f;
   --radius: 18px;
   --shadow: 3px 3px 0 var(--ink);
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -26,10 +28,12 @@
 html, body { margin: 0; background: var(--bg); color: var(--text);
   font-family: "Nunito", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 16px; }
 body { padding-top: var(--safe-t); padding-bottom: calc(80px + var(--safe-b)); min-height: 100vh;
-  background-image: radial-gradient(rgba(91,61,46,.06) 1px, transparent 1.2px); background-size: 18px 18px; }
+  /* soft plaid grid */
+  background-image: linear-gradient(var(--bg-line) 1px, transparent 1px), linear-gradient(90deg, var(--bg-line) 1px, transparent 1px);
+  background-size: 22px 22px; }
 .topbar { padding: 14px 18px 4px; max-width: 560px; margin: 0 auto; display: flex; align-items: center; gap: 10px; }
-.topbar img { width: 34px; height: 34px; border-radius: 10px; border: 2px solid var(--ink); }
-.topbar h1 { margin: 0; font-family: var(--font-display); font-size: 27px; font-weight: 600; letter-spacing: .2px; }
+.topbar img { width: 34px; height: 34px; border-radius: 10px; border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--ink); }
+.topbar h1 { color: var(--on-bg); margin: 0; font-family: var(--font-display); font-size: 27px; font-weight: 600; letter-spacing: .2px; }
 main { padding: 8px 16px 24px; max-width: 560px; margin: 0 auto; }
 .hidden { display: none !important; }
 
@@ -134,3 +138,10 @@ label { display: block; font-size: 13.5px; color: var(--muted); margin: 12px 0 5
 .stat { background: var(--bg) !important; box-shadow: none !important; border-width: 1.5px !important; }
 .dialog { z-index: 70; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+
+/* Things that sit directly on the cocoa background */
+main > .center:not(.card), main > .center:not(.card) button.link { color: var(--on-bg); text-decoration-color: var(--berry-soft); }
+main > p.muted:not(.card), main > .muted:not(.card) { color: #e6d4bd; }
+.toast { background: var(--card); color: var(--text); border: 2px solid var(--ink); box-shadow: var(--shadow); }
+input, select, textarea { background: #fbf4e8; }
+.ai-item, .stat { background: #f8eedd !important; }

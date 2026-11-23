@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '12';
+const APP_VERSION = '13';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -694,7 +694,7 @@ function renderWeight() {
       <div class="small" style="text-align:right">${weekAgo ? `7d: <b>${delta(latest.value - weekAgo.value)}</b><br>` : ''}Total: <b>${delta(latest.value - first.value)}</b></div></div>
       <div class="seg" style="margin-top:12px" id="rangeSeg">${['30', '90', '365', 'all'].map(r => `<button data-r="${r}" class="${weightRange === r ? 'active' : ''}">${r === 'all' ? 'All' : r === '365' ? '1y' : r + 'd'}</button>`).join('')}</div>
       <div class="chart" id="chart"></div>
-      <div class="small muted"><span style="color:#e8616b">●</span> daily weigh-in &nbsp; <span style="color:#86ad63">━</span> 7-day trend</div>
+      <div class="small muted"><span style="color:#d3715d">●</span> daily weigh-in &nbsp; <span style="color:#9aa86f">━</span> 7-day trend</div>
     </div>
     <div class="card"><h3>History</h3><ul class="list">${[...ws].reverse().slice(0, 60).map(w => `<li><span class="name">${fmtDay(w.date)}</span><span class="kcal">${w.value} ${unit}</span><button class="icon" data-delw="${w.date}">✕</button></li>`).join('')}</ul></div>` : '<div class="card muted">Log your first weigh-in to see your trend.</div>'}`;
   document.getElementById('wAdd').onclick = () => {
@@ -723,11 +723,11 @@ function drawChart(el, ws) {
   const y = v => P.t + (hi - v) / (hi - lo) * (H - P.t - P.b);
   const ticks = [lo + pad, (lo + hi) / 2, hi - pad];
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">
-    ${ticks.map(t => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" stroke="#e8d8c0" stroke-dasharray="3 3"/><text x="${P.l - 4}" y="${y(t) + 4}" fill="#9b8172" font-size="10" text-anchor="end">${t.toFixed(1)}</text>`).join('')}
-    <text x="${P.l}" y="${H - 6}" fill="#9b8172" font-size="10">${fmtDay(pts[0].date)}</text>
-    <text x="${W - P.r}" y="${H - 6}" fill="#9b8172" font-size="10" text-anchor="end">${fmtDay(pts[pts.length - 1].date)}</text>
-    ${tr.length > 1 ? `<polyline fill="none" stroke="#86ad63" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${tr.map(p => `${x(p.date)},${y(p.value)}`).join(' ')}"/>` : ''}
-    ${pts.map(p => `<circle cx="${x(p.date)}" cy="${y(p.value)}" r="3.5" fill="#e8616b" stroke="#5b3d2e" stroke-width="1"/>`).join('')}
+    ${ticks.map(t => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" stroke="#d8c3a3" stroke-dasharray="3 3"/><text x="${P.l - 4}" y="${y(t) + 4}" fill="#8a6f60" font-size="10" text-anchor="end">${t.toFixed(1)}</text>`).join('')}
+    <text x="${P.l}" y="${H - 6}" fill="#8a6f60" font-size="10">${fmtDay(pts[0].date)}</text>
+    <text x="${W - P.r}" y="${H - 6}" fill="#8a6f60" font-size="10" text-anchor="end">${fmtDay(pts[pts.length - 1].date)}</text>
+    ${tr.length > 1 ? `<polyline fill="none" stroke="#9aa86f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${tr.map(p => `${x(p.date)},${y(p.value)}`).join(' ')}"/>` : ''}
+    ${pts.map(p => `<circle cx="${x(p.date)}" cy="${y(p.value)}" r="3.5" fill="#d3715d" stroke="#4a3329" stroke-width="1"/>`).join('')}
   </svg>`;
 }
 
