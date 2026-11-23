@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '9';
+const APP_VERSION = '10';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -593,19 +593,21 @@ function parseFoodJSON(text) {
 // Anthropic Claude (paid API)
 async function estimateClaude(b64, hint) {
   const prompt = foodPrompt(hint);
+  const model = S.settings.aiModel || 'claude-opus-5-5';
+  const canFallback = !/haiku/.test(model); // server-side refusal fallback isn't offered for Haiku
   const resp = await apiFetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-api-key': S.settings.apiKey,
       'anthropic-version': '2026-10-21',
-      'anthropic-beta': 'server-side-fallback-2026-07-01',
+      ...(canFallback ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}),
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
-      model: S.settings.aiModel || 'claude-opus-5-5',
+      model,
       max_tokens: 4000,
-      fallbacks: 'default',
+      ...(canFallback ? { fallbacks: 'default' } : {}),
       output_config: { effort: 'low', format: { type: 'json_schema', schema: FOOD_SCHEMA } },
       messages: [{ role: 'user', content: [
         { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
