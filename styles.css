@@ -100,3 +100,4 @@ label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px
 .ai-item { background: var(--bg); border-radius: 10px; padding: 8px; margin-bottom: 6px; }
 .ai-item .row input { padding: 6px 8px; }
 .dialog { z-index: 70; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }

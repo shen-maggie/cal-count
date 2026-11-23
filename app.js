@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '7';
+const APP_VERSION = '8';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -330,11 +330,13 @@ function renderHome() {
         <h2>Log food</h2>
         <div class="meal-btns">${enabledMeals().map(m => `<button class="meal-btn" data-meal="${m.id}">${m.label}<small>${sumKcal(foodsOn(dayKey()).filter(x => x.meal === m.id))} kcal</small></button>`).join('')}</div>
         <div class="btn-grid" style="margin-top:10px"><button class="btn blue" id="snapBtn">📷 Snap a photo</button><button class="btn" id="quickBtn">⚡ Quick add</button></div>
+        <button class="btn" id="mineBtn" style="margin-top:8px">📖 My recipes & foods</button>
       </div>
       <button class="btn primary" id="startFast">Start ${st.fastHours}h fast</button>
       <div class="center"><button class="link" id="startEarlier">Started earlier? Set start time</button> · <button class="link" id="recapBtn">📊 Weekly recap</button></div>`;
     if (last) { const tick = () => { const el = document.getElementById('tSince'); if (el) el.textContent = fmtDur(Date.now() - last.end, false); }; tick(); setTick(tick); } else setTick(null);
-    view.querySelectorAll('.meal-btn').forEach(b => b.onclick = () => openLogSheet(b.dataset.meal));
+    view.querySelectorAll('.meal-btn').forEach(b => b.onclick = () => openLogSheet(b.dataset.meal, 'library'));
+    document.getElementById('mineBtn').onclick = () => openLogSheet(guessMeal(), 'library');
     document.getElementById('snapBtn').onclick = () => openLogSheet(guessMeal(), 'photo');
     document.getElementById('quickBtn').onclick = () => openLogSheet(guessMeal(), 'quick');
     document.getElementById('startFast').onclick = () => startFast();
@@ -362,7 +364,7 @@ function openLogSheet(meal, mode = 'quick', date = dayKey()) {
       <label>Meal</label>
       <select id="mealSel">${enabledMeals().map(m => `<option value="${m.id}" ${m.id === state.meal ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       <div class="seg" style="margin-top:12px">
-        ${[['quick', '⚡ Quick'], ['photo', '📷 AI photo'], ['library', '🔎 Search']].map(([k, l]) => `<button data-mode="${k}" class="${state.mode === k ? 'active' : ''}">${l}</button>`).join('')}
+        ${[['quick', '⚡ Quick'], ['photo', '📷 AI photo'], ['library', '📖 Recipes']].map(([k, l]) => `<button data-mode="${k}" class="${state.mode === k ? 'active' : ''}">${l}</button>`).join('')}
       </div>
       <div id="modeBody"></div>`);
     document.getElementById('x').onclick = closeSheet;
@@ -405,7 +407,7 @@ function ingredientFromCommon(food) {
 
 function drawLibraryPick(el, state) {
   el.innerHTML = `
-    <input id="libSearch" placeholder="Search foods, e.g. chicken, apple, rice…" autocomplete="off">
+    <input id="libSearch" placeholder="Search your recipes, ingredients & common foods…" autocomplete="off">
     <ul class="list" id="libList"></ul>
     <p class="small muted">Common foods use USDA averages. Amounts are in grams unless noted.</p>`;
   const list = document.getElementById('libList');
@@ -420,7 +422,7 @@ function drawLibraryPick(el, state) {
     list.querySelectorAll('[data-addc]').forEach(b => b.onclick = () => { const f = CF[+b.dataset.addc]; const g = +list.querySelector(`[data-c="${f.i}"]`).value || 0; addFoods([{ name: `${f.name} (${g} g)`, ...cfScale(f, g), source: 'common' }], state.meal, state.date); });
   };
   draw(''); document.getElementById('libSearch').oninput = e => draw(e.target.value);
-  setTimeout(() => document.getElementById('libSearch')?.focus(), 50);
+  if (!S.recipes.length && !S.ingredients.some(i => !i.common)) setTimeout(() => document.getElementById('libSearch')?.focus(), 50);
 }
 
 // ---------- AI photo estimation (Gemini or Claude API, called directly from the browser) ----------
@@ -432,19 +434,29 @@ function drawPhoto(el, state) {
     return;
   }
   el.innerHTML = `
-    <label class="btn blue" style="display:block;text-align:center;cursor:pointer">📷 Take or choose photo<input type="file" accept="image/*" capture="environment" id="photoIn" class="hidden"></label>
+    <div class="btn-grid"><button class="btn blue" id="camBtn">📷 Take photo</button><button class="btn blue" id="libBtn">🖼 Choose photo</button></div>
+    <input type="file" accept="image/*" capture="environment" id="camIn" class="visually-hidden">
+    <input type="file" accept="image/*" id="photoIn" class="visually-hidden">
     <img id="prev" class="preview-img hidden" alt="">
     <label>Size / weight hints (optional, improves accuracy)</label>
     <textarea id="hint" rows="2" placeholder="e.g. plate is 10 in wide; chicken ~150 g; 1 cup rice"></textarea>
     <button class="btn primary" id="estBtn" style="margin-top:12px" disabled>Estimate calories</button>
     <div id="aiOut"></div>`;
   let imgData = null;
-  document.getElementById('photoIn').onchange = async e => {
+  document.getElementById('camBtn').onclick = () => document.getElementById('camIn').click();
+  document.getElementById('libBtn').onclick = () => document.getElementById('photoIn').click();
+  const onPick = async e => {
     const file = e.target.files[0]; if (!file) return;
-    imgData = await resizeImage(file, 1280);
-    const p = document.getElementById('prev'); p.src = 'data:image/jpeg;base64,' + imgData; p.classList.remove('hidden');
-    document.getElementById('estBtn').disabled = false;
+    const out = document.getElementById('aiOut'); out.innerHTML = '';
+    try {
+      imgData = await resizeImage(file, 1280);
+      const p = document.getElementById('prev'); p.src = 'data:image/jpeg;base64,' + imgData; p.classList.remove('hidden');
+      document.getElementById('estBtn').disabled = false;
+    } catch (err) { out.innerHTML = `<div class="warnbox">${esc(err.message)}</div>`; }
+    e.target.value = '';
   };
+  document.getElementById('camIn').onchange = onPick;
+  document.getElementById('photoIn').onchange = onPick;
   document.getElementById('estBtn').onclick = async () => {
     const out = document.getElementById('aiOut');
     out.innerHTML = '<div class="spinner"></div><p class="center small muted">Estimating…</p>';
@@ -468,7 +480,7 @@ function resizeImage(file, max) {
       URL.revokeObjectURL(img.src);
       resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
     };
-    img.onerror = () => reject(new Error('Could not read that image'));
+    img.onerror = () => reject(new Error('Could not read that photo. Try another one, or take a new photo.'));
     img.src = URL.createObjectURL(file);
   });
 }
@@ -494,15 +506,20 @@ const estimateFood = (b64, hint) => S.settings.aiProvider === 'claude' ? estimat
 // Google Gemini (free tier available at aistudio.google.com)
 // Free-tier models are often "overloaded" (503). We retry with backoff, then try other Flash models.
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// fetch() that turns network failures ("Load failed" on iPhone) into a readable message
+async function apiFetch(url, opts, who) {
+  try { return await fetch(url, opts); }
+  catch { throw new Error(`Couldn't reach ${who}. Check your internet connection and try again.`); }
+}
 async function callGemini(model, b64, prompt) {
-  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+  const resp = await apiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': S.settings.geminiKey },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: prompt }] }],
       generationConfig: { responseMimeType: 'application/json' },
     }),
-  });
+  }, 'Google Gemini');
   const data = await resp.json().catch(() => ({}));
   return { status: resp.status, ok: resp.ok, data, msg: data?.error?.message || resp.statusText };
 }
@@ -554,7 +571,7 @@ function parseFoodJSON(text) {
 // Anthropic Claude (paid API)
 async function estimateClaude(b64, hint) {
   const prompt = foodPrompt(hint);
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+  const resp = await apiFetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -573,7 +590,7 @@ async function estimateClaude(b64, hint) {
         { type: 'text', text: prompt },
       ] }],
     }),
-  });
+  }, 'Anthropic');
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const msg = data?.error?.message || resp.statusText;
