@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '11';
+const APP_VERSION = '12';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -857,7 +857,7 @@ function renderSettings() {
       <label>Model</label><input id="sGModel" value="${esc(st.geminiModel)}" autocomplete="off" autocapitalize="off">
       <p class="small muted">If this model is retired, the app switches to a current Flash model automatically.</p>`}</div>
     <div class="card"><h2>Data</h2><p class="small muted">Everything is stored on this phone only. Export a backup now and then. · App version ${APP_VERSION}</p>
-      <div class="btn-grid"><button class="btn" id="sExp">Export backup</button><label class="btn" style="text-align:center;margin:0;color:var(--text);font-size:16px">Import<input type="file" accept="application/json" id="sImp" class="hidden"></label></div>
+      <div class="btn-grid"><button class="btn" id="sExp">Export backup</button><button class="btn" id="sImpBtn">Import backup</button><input type="file" accept=".json,application/json,text/plain" id="sImp" class="visually-hidden"></div>
       <button class="btn danger" id="sWipe" style="margin-top:8px">Erase all data</button></div>`;
   const set = (k, v) => { st[k] = v; save(); };
   const bindEl = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
@@ -888,7 +888,8 @@ function renderSettings() {
     const p = await Notification.requestPermission(); toast(p === 'granted' ? 'Notifications on' : 'Notifications ' + p); if (p === 'granted') notify('FastCal', 'Reminders are on. You\'ll get a nudge when it\'s time to start your fast.'); render();
   };
   document.getElementById('sIcs').onclick = downloadICS;
-  document.getElementById('sExp').onclick = () => download(`fastcal-backup-${dayKey()}.json`, JSON.stringify(S, null, 1), 'application/json');
+  document.getElementById('sExp').onclick = () => exportBackup();
+  document.getElementById('sImpBtn').onclick = () => document.getElementById('sImp').click();
   document.getElementById('sImp').onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
     try { const d = JSON.parse(await f.text()); if (!d.settings) throw 0; localStorage.setItem(STORE_KEY, JSON.stringify(d)); S = load(); toast('Backup restored'); render(); } catch { toast('That file isn\'t a FastCal backup'); }
@@ -896,6 +897,15 @@ function renderSettings() {
   document.getElementById('sWipe').onclick = async () => { if ((await confirmDialog({ title: 'Erase everything?', body: 'This deletes all fasts, food, weights and recipes from this device.', ok: 'Erase', danger: true })) === true) { localStorage.removeItem(STORE_KEY); S = load(); render(); } };
 }
 
+// On iPhone, share the file so it can be saved to Files (plain downloads are unreliable in Home Screen apps).
+async function exportBackup() {
+  const name = `fastcal-backup-${dayKey()}.json`, text = JSON.stringify(S, null, 1);
+  try {
+    const file = new File([text], name, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'FastCal backup' }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  download(name, text, 'application/json');
+}
 function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
 function downloadICS() {
   const p = n => String(n).padStart(2, '0'), BY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
