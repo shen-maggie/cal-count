@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '5';
+const APP_VERSION = '6';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -13,8 +13,12 @@ const MEALS = [
 const DEFAULT_STATE = {
   settings: {
     fastHours: 16,
-    eatStart: '12:00',          // eating window opens; it closes after (24 - fastHours) hours
+    eatStart: '12:00',          // first meal time when the schedule is the same every day
+    sameEveryDay: true,
+    schedule: null,             // per weekday (0=Sun..6=Sat): {on, eat:'HH:MM'} first meal / end of fast that day
     calorieGoal: 1800,
+    weeklyBudget: 0,            // 0 = daily goal x 7
+    weekStart: 1,               // 1 = Monday, 0 = Sunday
     meals: { breakfast: true, lunch: true, dinner: true, snacks: true },
     streakFreeze: true,
     reminders: true,
@@ -30,7 +34,7 @@ const DEFAULT_STATE = {
   weights: [],      // {date, value}
   ingredients: [],  // {id, name, unit, kcalPerUnit, unitSize}  e.g. unit 'g', unitSize 100, kcal per 100 g
   recipes: [],      // {id, name, servings, items:[{ingId, qty}]}
-  meta: { lastReminderDay: '', lastReminderFor: '' },
+  meta: { lastReminderDay: '', lastReminderFor: '', lastRecapWeek: '' },
 };
 
 function load() {
@@ -40,6 +44,7 @@ function load() {
     const s = { ...structuredClone(DEFAULT_STATE), ...raw };
     s.settings = { ...DEFAULT_STATE.settings, ...raw.settings, meals: { ...DEFAULT_STATE.settings.meals, ...(raw.settings || {}).meals } };
     s.meta = { ...DEFAULT_STATE.meta, ...raw.meta };
+    if (!Array.isArray(s.settings.schedule) || s.settings.schedule.length !== 7) s.settings.schedule = Array.from({ length: 7 }, () => ({ on: true, eat: s.settings.eatStart || '12:00' }));
     return s;
   } catch { return structuredClone(DEFAULT_STATE); }
 }
@@ -60,7 +65,15 @@ const fmtTime = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minut
 const fmtDay = k => new Date(k + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 function parseHM(hm) { const [h, m] = hm.split(':').map(Number); return h * 60 + m; }
 function hmFromMin(min) { min = ((min % 1440) + 1440) % 1440; return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`; }
-function eatEndHM() { return hmFromMin(parseHM(S.settings.eatStart) + (24 - S.settings.fastHours) * 60); }
+// ----- Fasting schedule: each weekday has a first-meal time; the planned fast ends then and starts fastHours earlier.
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const weekdayOf = key => new Date(key + 'T12:00:00').getDay();
+function schedFor(key) { const st = S.settings; return st.sameEveryDay ? { on: true, eat: st.eatStart } : st.schedule[weekdayOf(key)]; }
+function atHM(key, hm) { const [h, m] = hm.split(':'); const d = new Date(key + 'T00:00:00'); d.setHours(+h, +m, 0, 0); return d.getTime(); }
+// Planned fast that ends on eating day `key`, or null if that day is a no-fast day
+function plannedFast(key) { const sc = schedFor(key); if (!sc || !sc.on) return null; const end = atHM(key, sc.eat); return { key, start: end - S.settings.fastHours * 3.6e6, end }; }
+// The planned fast that is in progress or next up
+function currentPlan(now = Date.now()) { for (let i = -1; i < 9; i++) { const p = plannedFast(addDays(dayKey(now), i)); if (p && p.end > now) return p; } return null; }
 function hm12(hm) { const d = new Date(); const [h, m] = hm.split(':'); d.setHours(+h, +m, 0, 0); return fmtTime(d); }
 // Next occurrence (Date) of an HH:MM time after `from`
 function nextAt(hm, from = new Date()) { const d = new Date(from); const [h, m] = hm.split(':'); d.setHours(+h, +m, 0, 0); if (d <= from) d.setDate(d.getDate() + 1); return d; }
@@ -89,17 +102,17 @@ function goalDays() {
   for (const f of S.fasts) if (f.end && (f.end - f.start) / 3.6e6 >= f.goalH) set.add(dayKey(f.end));
   return set;
 }
-const weekId = key => { const d = new Date(key + 'T12:00:00'); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return dayKey(d); }; // Monday of the week
-function computeStreak() {
+const weekId = key => { const d = new Date(key + 'T12:00:00'); const day = (d.getDay() - S.settings.weekStart + 7) % 7; d.setDate(d.getDate() - day); return dayKey(d); }; // first day of the week
+function computeStreak(today = dayKey()) {
   const hits = goalDays();
   if (!hits.size) return { streak: 0, frozen: [], todayDone: false };
   const first = [...hits].sort()[0];
-  const today = dayKey();
   const todayDone = hits.has(today);
   let day = todayDone ? today : addDays(today, -1); // today still in progress doesn't break streak
   let streak = 0, oldest = null; let frozen = []; const usedWeeks = new Set();
   while (day >= first) {
-    if (hits.has(day)) { streak++; oldest = day; }
+    if (hits.has(day)) { if (day <= today) { streak++; oldest = day; } }
+    else if (!plannedFast(day)) { /* scheduled no-fast day: doesn't count or break */ }
     else if (S.settings.streakFreeze && !usedWeeks.has(weekId(day))) { usedWeeks.add(weekId(day)); frozen.push(day); }
     else break;
     day = addDays(day, -1);
@@ -152,6 +165,67 @@ const ingById = id => S.ingredients.find(i => i.id === id);
 function ingKcal(ing, qty) { return ing ? (+qty || 0) / (+ing.unitSize || 1) * (+ing.kcalPerUnit || 0) : 0; }
 function recipeKcal(r) { return r.items.reduce((a, it) => a + ingKcal(ingById(it.ingId), it.qty), 0); }
 const recipePerServing = r => recipeKcal(r) / (+r.servings || 1);
+
+// ---------- Weekly budget & recap ----------
+const weekBudget = () => +S.settings.weeklyBudget || S.settings.calorieGoal * 7;
+const weekDays = wk => Array.from({ length: 7 }, (_, i) => addDays(wk, i));
+function weekBudgetInfo(key = dayKey()) {
+  const wk = weekId(key), days = weekDays(wk), budget = weekBudget();
+  const total = sumKcal(S.foods.filter(f => days.includes(f.date)));
+  const before = sumKcal(S.foods.filter(f => days.includes(f.date) && f.date < key));
+  const daysLeft = days.filter(d => d >= key).length;
+  return { wk, budget, total, left: budget - total, perDay: Math.max(0, Math.round((budget - before) / daysLeft)), daysLeft };
+}
+function weekBudgetHTML(key = dayKey()) {
+  const w = weekBudgetInfo(key);
+  return `<div class="row between small" style="margin-top:12px"><span>This week: <b>${w.total.toLocaleString()}</b> / ${w.budget.toLocaleString()}</span><span class="muted">${w.left >= 0 ? w.left.toLocaleString() + ' left' : (-w.left).toLocaleString() + ' over'}</span></div>
+    <div class="bar ${w.total > w.budget ? 'over' : ''}" style="margin-top:6px;height:6px"><div style="width:${Math.min(100, w.total / w.budget * 100)}%;background:var(--accent2)"></div></div>
+    ${w.daysLeft > 1 && w.left > 0 ? `<div class="small muted" style="margin-top:6px">To stay on budget: about ${w.perDay.toLocaleString()} kcal/day for the ${w.daysLeft} days left (incl. today)</div>` : ''}`;
+}
+function weekStats(wk) {
+  const days = weekDays(wk), t0 = atHM(wk, '00:00'), t1 = atHM(addDays(wk, 7), '00:00'), now = Date.now();
+  const foods = S.foods.filter(f => days.includes(f.date));
+  const total = sumKcal(foods), logged = days.filter(d => foods.some(f => f.date === d));
+  const overDays = logged.filter(d => sumKcal(foods.filter(f => f.date === d)) > S.settings.calorieGoal).length;
+  let fastMs = 0, completed = 0, longest = 0;
+  for (const f of S.fasts) {
+    const a = Math.max(f.start, t0), b = Math.min(f.end || now, t1); if (b > a) fastMs += b - a;
+    if (f.end && f.end >= t0 && f.end < t1) { const d = f.end - f.start; longest = Math.max(longest, d); if (d / 3.6e6 >= f.goalH) completed++; }
+  }
+  const lastDay = days[6] < dayKey() ? days[6] : dayKey();
+  const ws = [...S.weights].sort((a, b) => a.date.localeCompare(b.date));
+  const startW = ws.filter(w => w.date < wk).pop() || ws.find(w => days.includes(w.date));
+  const endW = ws.filter(w => days.includes(w.date)).pop();
+  const planned = days.filter(d => d <= lastDay && plannedFast(d)).length;
+  return { wk, days, total, budget: weekBudget(), logged: logged.length, avg: logged.length ? Math.round(total / logged.length) : 0, overDays,
+    fastHours: fastMs / 3.6e6, completed, planned, longest, streak: computeStreak(lastDay).streak,
+    startW, endW, dW: startW && endW && startW !== endW ? endW.value - startW.value : null };
+}
+function openRecap(wk = weekId(addDays(dayKey(), -7))) {
+  const r = weekStats(wk), unit = S.settings.weightUnit, cur = weekId(dayKey());
+  const stat = (label, val, sub = '') => `<div class="card" style="background:var(--bg);margin:0"><div class="small muted">${label}</div><div style="font-size:22px;font-weight:700">${val}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
+  openSheet(`<div class="row between"><h2>Weekly recap</h2><button class="icon" id="rcX">✕</button></div>
+    <div class="row between"><button class="icon" id="rcPrev">‹</button><b>${fmtDay(wk)} – ${fmtDay(addDays(wk, 6))}${wk === cur ? ' (so far)' : ''}</b><button class="icon" id="rcNext" ${wk >= cur ? 'disabled style="opacity:.3"' : ''}>›</button></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+      ${stat('Calories', r.total.toLocaleString(), `of ${r.budget.toLocaleString()} budget · ${r.total <= r.budget ? (r.budget - r.total).toLocaleString() + ' under' : (r.total - r.budget).toLocaleString() + ' over'}`)}
+      ${stat('Daily average', r.avg.toLocaleString(), `${r.logged} day${r.logged === 1 ? '' : 's'} logged · ${r.overDays} over goal`)}
+      ${stat('Hours fasted', r.fastHours.toFixed(1), `${r.completed} of ${r.planned} planned fasts hit · longest ${fmtDur(r.longest, false)}`)}
+      ${stat('Fasting streak', `🔥 ${r.streak}`, 'days, at end of week')}
+      ${stat('Weight change', r.dW === null ? '—' : `${delta(r.dW)} ${unit}`, r.endW ? `${r.startW && r.startW !== r.endW ? r.startW.value + ' → ' : ''}${r.endW.value} ${unit}` : 'no weigh-ins this week')}
+    </div>
+    ${r.dW !== null && r.dW < 0 ? `<p class="center">Nice work, down ${Math.abs(r.dW).toFixed(1)} ${unit} this week 🎉</p>` : ''}`);
+  document.getElementById('rcX').onclick = closeSheet;
+  document.getElementById('rcPrev').onclick = () => openRecap(addDays(wk, -7));
+  document.getElementById('rcNext').onclick = () => { if (wk < cur) openRecap(addDays(wk, 7)); };
+}
+// Show last week's recap once, the first time the app opens in a new week.
+function maybeShowRecap() {
+  const cur = weekId(dayKey()), prev = addDays(cur, -7);
+  if (S.meta.lastRecapWeek === cur) return;
+  const hadData = S.foods.some(f => f.date >= prev && f.date < cur) || S.fasts.some(f => f.start < atHM(cur, '00:00') && (f.end || Date.now()) >= atHM(prev, '00:00'));
+  S.meta.lastRecapWeek = cur; save();
+  if (hadData && sheet.classList.contains('hidden') && !document.querySelector('.dialog')) openRecap(prev);
+}
 
 // ---------- UI shell ----------
 let tab = 'home';
@@ -219,7 +293,8 @@ function renderHome() {
         </div>
         <button class="link" id="logDuringFast" style="margin-top:10px">+ Log food</button>
       </div>
-      <div class="card small muted">Today: ${todayK} / ${st.calorieGoal} kcal · Eating window ${hm12(st.eatStart)}–${hm12(eatEndHM())}</div>`;
+      <div class="card small muted">Today: ${todayK} / ${st.calorieGoal} kcal${(() => { const p = currentPlan(); return p ? ` · Next meal planned ${fmtTime(p.end)} ${dayLabelFor(p.end)}` : ''; })()}</div>
+      <div class="center"><button class="link" id="recapBtn">📊 Weekly recap</button></div>`;
     const tick = () => {
       const el = document.getElementById('tElapsed'); if (!el) return;
       const e = Date.now() - f.start; el.textContent = fmtDur(e);
@@ -234,18 +309,22 @@ function renderHome() {
     };
     document.getElementById('editStart').onclick = () => editTimeSheet('Fast start time', f.start, t => { f.start = Math.min(t, Date.now()); save(); render(); });
     document.getElementById('logDuringFast').onclick = () => openLogSheet(guessMeal());
+    document.getElementById('recapBtn').onclick = () => openRecap(weekId(dayKey()));
   } else {
     const last = lastFinishedFast();
     const pct = Math.min(1, todayK / st.calorieGoal);
-    const nextFastAt = nextAt(eatEndHM());
+    const plan = currentPlan();
+    const planPill = !plan ? '' : plan.start > Date.now() ? `<span class="pill">Fast starts ${fmtTime(plan.start)}${dayLabelFor(plan.start) === 'today' ? '' : ' ' + dayLabelFor(plan.start)}</span>`
+      : `<span class="pill amber">Fast was due ${fmtTime(plan.start)}</span>`;
     view.innerHTML = `
       <div class="card">
         <div class="row between">${streakHTML()}<span class="small muted">Since last fast: <b id="tSince">${last ? '' : '—'}</b></span></div>
       </div>
       <div class="card">
         <div class="row between"><div><div class="big-num">${todayK}</div><div class="small muted">of ${st.calorieGoal} kcal · ${Math.max(0, st.calorieGoal - todayK)} left</div></div>
-        <span class="pill">Window closes ${fmtTime(nextFastAt)}</span></div>
+        ${planPill}</div>
         <div class="bar ${todayK > st.calorieGoal ? 'over' : ''}" style="margin-top:10px"><div style="width:${pct * 100}%"></div></div>
+        ${weekBudgetHTML()}
       </div>
       <div class="card">
         <h2>Log food</h2>
@@ -253,12 +332,13 @@ function renderHome() {
         <div class="btn-grid" style="margin-top:10px"><button class="btn blue" id="snapBtn">📷 Snap a photo</button><button class="btn" id="quickBtn">⚡ Quick add</button></div>
       </div>
       <button class="btn primary" id="startFast">Start ${st.fastHours}h fast</button>
-      <div class="center"><button class="link" id="startEarlier">Started earlier? Set start time</button></div>`;
+      <div class="center"><button class="link" id="startEarlier">Started earlier? Set start time</button> · <button class="link" id="recapBtn">📊 Weekly recap</button></div>`;
     if (last) { const tick = () => { const el = document.getElementById('tSince'); if (el) el.textContent = fmtDur(Date.now() - last.end, false); }; tick(); setTick(tick); } else setTick(null);
     view.querySelectorAll('.meal-btn').forEach(b => b.onclick = () => openLogSheet(b.dataset.meal));
     document.getElementById('snapBtn').onclick = () => openLogSheet(guessMeal(), 'photo');
     document.getElementById('quickBtn').onclick = () => openLogSheet(guessMeal(), 'quick');
     document.getElementById('startFast').onclick = () => startFast();
+    document.getElementById('recapBtn').onclick = () => openRecap(weekId(dayKey()));
     document.getElementById('startEarlier').onclick = () => editTimeSheet('When did your fast start?', Date.now(), t => startFast(Math.min(t, Date.now())));
   }
 }
@@ -534,7 +614,8 @@ function renderFood() {
     <div class="card"><div class="row between"><button class="icon" id="prevDay">‹</button><b>${foodDay === dayKey() ? 'Today' : fmtDay(foodDay)}</b><button class="icon" id="nextDay" ${foodDay >= dayKey() ? 'disabled style="opacity:.3"' : ''}>›</button></div>
       <div class="row between" style="margin-top:8px"><span class="big-num">${total}</span><span class="muted small">Goal ${goal} · ${goal - total >= 0 ? goal - total + ' left' : total - goal + ' over'}</span></div>
       <div class="bar ${total > goal ? 'over' : ''}" style="margin-top:8px"><div style="width:${Math.min(100, total / goal * 100)}%"></div></div>
-      <div class="small muted" style="margin-top:8px">Protein ${macros[0]}g · Carbs ${macros[1]}g · Fat ${macros[2]}g</div></div>
+      <div class="small muted" style="margin-top:8px">Protein ${macros[0]}g · Carbs ${macros[1]}g · Fat ${macros[2]}g</div>
+      ${weekBudgetHTML(foodDay)}</div>
     ${meals.map(m => { const mi = items.filter(f => f.meal === m.id); return `
       <div class="card"><div class="row between"><h3>${m.label}</h3><span class="muted">${sumKcal(mi)} kcal</span></div>
         <ul class="list">${mi.map(f => `<li><span class="name">${f.source === 'ai' ? '📷 ' : ''}${esc(f.name)}</span><span class="kcal">${f.kcal}</span><button class="icon" data-delf="${f.id}">✕</button></li>`).join('')}</ul>
@@ -695,17 +776,23 @@ function renderSettings() {
     <div class="card"><h2>Fasting schedule</h2>
       <label>Fasting plan</label>
       <select id="sPlan">${[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map(h => `<option value="${h}" ${h === st.fastHours ? 'selected' : ''}>${h}:${24 - h} (${h}h fast)</option>`).join('')}</select>
-      <label>Eating window opens at</label><input type="time" id="sEat" value="${st.eatStart}">
-      <p class="small muted">Eating ${hm12(st.eatStart)}–${hm12(eatEndHM())}. You'll be reminded at ${hm12(eatEndHM())} to start fasting if you haven't.</p>
+      <div class="switch"><span>Same schedule every day</span><input type="checkbox" id="sSame" ${st.sameEveryDay ? 'checked' : ''}></div>
+      ${st.sameEveryDay ? `<label>First meal (fast ends) at</label><input type="time" id="sEat" value="${st.eatStart}">
+      <p class="small muted">Eating ${hm12(st.eatStart)}–${hm12(hmFromMin(parseHM(st.eatStart) + (24 - st.fastHours) * 60))}. You'll be reminded at ${hm12(hmFromMin(parseHM(st.eatStart) - st.fastHours * 60))} to start your fast if you haven't.</p>`
+      : `<p class="small muted">Set when you eat your first meal each day. Your fast ends then and starts ${st.fastHours}h earlier, which is when you're reminded. Turn a day off to skip fasting (it won't break your streak).</p>
+      ${[0, 1, 2, 3, 4, 5, 6].map(i => (i + st.weekStart) % 7).map(d => { const sc = st.schedule[d]; return `<div class="row" style="padding:6px 0;border-bottom:1px solid #334155"><input type="checkbox" data-son="${d}" ${sc.on ? 'checked' : ''} style="width:auto;transform:scale(1.2)"><b style="width:40px">${DAY_NAMES[d]}</b><input type="time" data-seat="${d}" value="${sc.eat}" ${sc.on ? '' : 'disabled'} style="width:130px"><span class="small muted grow" style="text-align:right">${sc.on ? `fast starts ${parseHM(sc.eat) - st.fastHours * 60 < 0 ? DAY_NAMES[(d + 6) % 7] + ' ' : ''}${hm12(hmFromMin(parseHM(sc.eat) - st.fastHours * 60))}` : 'no fast'}</span></div>`; }).join('')}`}
       <div class="switch"><span>Fast reminders</span><input type="checkbox" id="sRem" ${st.reminders ? 'checked' : ''}></div>
       <p class="small muted">Notifications: <b>${notifState}</b>${standalone ? '' : ' · On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then enable here.'}</p>
       <div class="btn-grid"><button class="btn" id="sNotif">Enable notifications</button><button class="btn" id="sIcs">📅 Add to calendar</button></div>
-      <p class="small muted">Web apps can't schedule alerts while fully closed. The calendar option adds a daily ${hm12(eatEndHM())} reminder that always fires.</p>
+      <p class="small muted">Web apps can't schedule alerts while fully closed. The calendar option adds recurring reminders that match your schedule and always fire. Re-download it if you change your schedule.</p>
     </div>
     <div class="card"><h2>Streak</h2>
       <div class="switch"><span>Weekly streak freeze<br><span class="small muted">One missed day per week won't break your streak</span></span><input type="checkbox" id="sFreeze" ${st.streakFreeze ? 'checked' : ''}></div></div>
     <div class="card"><h2>Calories & meals</h2>
       <label>Daily calorie goal</label><input type="number" inputmode="numeric" id="sGoal" value="${st.calorieGoal}">
+      <label>Weekly calorie budget</label><input type="number" inputmode="numeric" id="sWeek" value="${st.weeklyBudget || ''}" placeholder="${(st.calorieGoal * 7).toLocaleString()} (daily goal × 7)">
+      <p class="small muted">Leave blank to use your daily goal × 7. Set your own if you want room for a bigger weekend.</p>
+      <label>Week starts on</label><select id="sWkStart"><option value="1" ${st.weekStart === 1 ? 'selected' : ''}>Monday</option><option value="0" ${st.weekStart === 0 ? 'selected' : ''}>Sunday</option></select>
       <label style="margin-top:12px">Meals to show</label>
       ${MEALS.map(m => `<div class="switch"><span>${m.label}</span><input type="checkbox" data-meal="${m.id}" ${st.meals[m.id] ? 'checked' : ''}></div>`).join('')}
       <p class="small muted">After you log your last meal of the day (${mealLabel(lastMainMeal())}), you'll be asked to start your fast.</p></div>
@@ -724,11 +811,17 @@ function renderSettings() {
       <div class="btn-grid"><button class="btn" id="sExp">Export backup</button><label class="btn" style="text-align:center;margin:0;color:var(--text);font-size:16px">Import<input type="file" accept="application/json" id="sImp" class="hidden"></label></div>
       <button class="btn danger" id="sWipe" style="margin-top:8px">Erase all data</button></div>`;
   const set = (k, v) => { st[k] = v; save(); };
+  const bindEl = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
   document.getElementById('sPlan').onchange = e => { set('fastHours', +e.target.value); const f = activeFast(); if (f) { f.goalH = +e.target.value; save(); } render(); };
-  document.getElementById('sEat').onchange = e => { set('eatStart', e.target.value || '12:00'); render(); };
+  document.getElementById('sSame').onchange = e => { if (!e.target.checked) st.schedule = st.schedule.map(sc => ({ ...sc, eat: sc.eat || st.eatStart })); set('sameEveryDay', e.target.checked); render(); };
+  bindEl('sEat', e => { set('eatStart', e.target.value || '12:00'); st.schedule = st.schedule.map(sc => ({ ...sc, eat: e.target.value || '12:00' })); save(); render(); });
+  view.querySelectorAll('[data-son]').forEach(c => c.onchange = () => { st.schedule[+c.dataset.son].on = c.checked; save(); render(); });
+  view.querySelectorAll('[data-seat]').forEach(c => c.onchange = () => { st.schedule[+c.dataset.seat].eat = c.value || '12:00'; save(); render(); });
+  document.getElementById('sWeek').onchange = e => set('weeklyBudget', +e.target.value || 0);
+  document.getElementById('sWkStart').onchange = e => { set('weekStart', +e.target.value); render(); };
   document.getElementById('sRem').onchange = e => set('reminders', e.target.checked);
   document.getElementById('sFreeze').onchange = e => set('streakFreeze', e.target.checked);
-  document.getElementById('sGoal').onchange = e => set('calorieGoal', +e.target.value || 1800);
+  document.getElementById('sGoal').onchange = e => { set('calorieGoal', +e.target.value || 1800); render(); };
   document.getElementById('sUnit').onchange = e => set('weightUnit', e.target.value);
   document.getElementById('sProv').onchange = e => { set('aiProvider', e.target.value); render(); };
   const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
@@ -743,7 +836,7 @@ function renderSettings() {
   });
   document.getElementById('sNotif').onclick = async () => {
     if (!('Notification' in window)) return toast(standalone ? 'Notifications not supported on this device' : 'Add to Home Screen first, then try again');
-    const p = await Notification.requestPermission(); toast(p === 'granted' ? 'Notifications on' : 'Notifications ' + p); if (p === 'granted') notify('FastCal', 'Reminders are on. You\'ll get a nudge when your eating window closes.'); render();
+    const p = await Notification.requestPermission(); toast(p === 'granted' ? 'Notifications on' : 'Notifications ' + p); if (p === 'granted') notify('FastCal', 'Reminders are on. You\'ll get a nudge when it\'s time to start your fast.'); render();
   };
   document.getElementById('sIcs').onclick = downloadICS;
   document.getElementById('sExp').onclick = () => download(`fastcal-backup-${dayKey()}.json`, JSON.stringify(S, null, 1), 'application/json');
@@ -756,13 +849,24 @@ function renderSettings() {
 
 function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
 function downloadICS() {
-  const start = nextAt(eatEndHM()); const p = n => String(n).padStart(2, '0');
+  const p = n => String(n).padStart(2, '0'), BY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
   const dt = d => `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}00`;
-  const end = new Date(start.getTime() + 15 * 6e4);
-  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//FastCal//EN', 'BEGIN:VEVENT', `UID:fastcal-${Date.now()}@fastcal`, `DTSTAMP:${dt(new Date())}`,
-    `DTSTART:${dt(start)}`, `DTEND:${dt(end)}`, 'RRULE:FREQ=DAILY', `SUMMARY:Start your ${S.settings.fastHours}h fast`, 'DESCRIPTION:Eating window is closing. Open FastCal and start your fast.',
-    'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Start your fast', 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
-  download('fastcal-reminder.ics', ics, 'text/calendar');
+  // Group reminder times (fast start) by weekday they fall on, one weekly event per distinct time
+  const groups = {};
+  for (let i = 1; i <= 7; i++) {
+    const pf = plannedFast(addDays(dayKey(), i)); if (!pf) continue;
+    const s0 = new Date(pf.start), hm = `${p(s0.getHours())}:${p(s0.getMinutes())}`;
+    (groups[hm] = groups[hm] || []).push(s0);
+  }
+  const events = Object.entries(groups).map(([hm, starts], n) => {
+    starts.sort((a, b) => a - b); const first = starts[0].getTime() > Date.now() ? starts[0] : new Date(starts[0].getTime() + 7 * 864e5);
+    const days = [...new Set(starts.map(d => BY[d.getDay()]))].join(',');
+    return ['BEGIN:VEVENT', `UID:fastcal-${Date.now()}-${n}@fastcal`, `DTSTAMP:${dt(new Date())}`, `DTSTART:${dt(first)}`, `DTEND:${dt(new Date(first.getTime() + 15 * 6e4))}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${days}`, `SUMMARY:Start your ${S.settings.fastHours}h fast`, 'DESCRIPTION:Time to start fasting. Open FastCal and tap Start fast.',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Start your fast', 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT'].join('\r\n');
+  });
+  if (!events.length) return toast('No fasting days are scheduled');
+  download('fastcal-reminders.ics', ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//FastCal//EN', ...events, 'END:VCALENDAR'].join('\r\n'), 'text/calendar');
 }
 
 // ---------- Reminders ----------
@@ -775,26 +879,23 @@ async function notify(title, body) {
     return true;
   } catch { return false; }
 }
-// Checks once a minute (and whenever the app comes back to the foreground) whether the eating window
-// has closed today without a fast started. Shows a system notification if allowed, plus an in-app prompt.
+// Checks once a minute (and whenever the app comes back to the foreground) whether a planned fast should have
+// started and no fast is running. Shows a system notification if allowed, plus an in-app prompt.
 async function checkReminder() {
   if (!S.settings.reminders || activeFast()) return;
-  const now = new Date(), endMin = parseHM(eatEndHM()), nowMin = now.getHours() * 60 + now.getMinutes();
-  const startMin = parseHM(S.settings.eatStart);
-  // Window that "should be fasting": from eatEnd until next eatStart (handles windows crossing midnight)
-  const inFastPeriod = endMin > startMin ? (nowMin >= endMin || nowMin < startMin) : (nowMin >= endMin && nowMin < startMin);
-  if (!inFastPeriod) return;
-  // Identify this fasting period by the date the eating window closed
-  const periodKey = nowMin >= endMin ? dayKey(now) : addDays(dayKey(now), -1);
-  if (S.meta.lastReminderFor === periodKey || document.querySelector('.dialog')) return;
-  S.meta.lastReminderFor = periodKey; save();
-  notify('Time to start your fast ⏱', `Your eating window closed at ${hm12(eatEndHM())}. Tap to start your ${S.settings.fastHours}h fast.`);
-  const go = await confirmDialog({ title: 'Time to start your fast', body: `Your eating window closed at ${hm12(eatEndHM())}. Start your ${S.settings.fastHours}h fast now?`, ok: 'Start fast now', extra: `I stopped eating at ${hm12(eatEndHM())}`, cancel: 'Later' });
+  const plan = currentPlan(); if (!plan || plan.start > Date.now()) return;
+  // Don't nag if the last fast ended recently (e.g. just broke a fast this morning)
+  const last = lastFinishedFast(); if (last && last.end > plan.start) return;
+  if (S.meta.lastReminderFor === plan.key || document.querySelector('.dialog')) return;
+  S.meta.lastReminderFor = plan.key; save();
+  const when = fmtTime(plan.start), meal = `${fmtTime(plan.end)} ${dayLabelFor(plan.end)}`;
+  notify('Time to start your fast ⏱', `Your fast was planned for ${when} so you can eat at ${meal}. Tap to start it.`);
+  const go = await confirmDialog({ title: 'Time to start your fast', body: `Your ${S.settings.fastHours}h fast was planned to start at ${when}, so you can eat at ${meal}. Start it now?`, ok: 'Start fast now', extra: `I stopped eating at ${when}`, cancel: 'Later' });
   if (go === true) startFast();
-  else if (go === 'extra') { const t = new Date(); const [h, m] = eatEndHM().split(':'); t.setHours(+h, +m, 0, 0); if (t > Date.now()) t.setDate(t.getDate() - 1); startFast(t.getTime()); }
+  else if (go === 'extra') startFast(plan.start);
 }
 setInterval(checkReminder, 60 * 1000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); checkReminder(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); maybeShowRecap(); checkReminder(); } });
 
 // ---------- Boot ----------
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -802,4 +903,4 @@ const params = new URLSearchParams(location.search);
 if (params.get('action') === 'log') setTimeout(() => openLogSheet(guessMeal()), 100);
 if (params.get('action') === 'photo') setTimeout(() => openLogSheet(guessMeal(), 'photo'), 100);
 render();
-setTimeout(checkReminder, 1500);
+setTimeout(() => { maybeShowRecap(); checkReminder(); }, 1500);
