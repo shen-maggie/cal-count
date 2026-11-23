@@ -4,26 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>FastCal</title>
-  <meta name="theme-color" content="#0f172a">
+  <meta name="theme-color" content="#f7efe1">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="FastCal">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600&family=Nunito:wght@400;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar"><h1 id="pageTitle">FastCal</h1></header>
+  <header class="topbar"><img src="icons/icon-192.png" alt=""><h1 id="pageTitle">FastCal</h1></header>
   <main id="view"></main>
 
   <nav class="tabbar">
-    <button data-tab="home" class="active"><span>⏱</span>Home</button>
-    <button data-tab="food"><span>🍽</span>Food</button>
-    <button data-tab="weight"><span>⚖️</span>Weight</button>
-    <button data-tab="library"><span>📖</span>Recipes</button>
-    <button data-tab="settings"><span>⚙️</span>Settings</button>
+    <button data-tab="home" class="active"><svg viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M12 13.5l2.5 1.6M10 3h4M12 3v3"/></svg>Home</button>
+    <button data-tab="food"><svg viewBox="0 0 24 24"><path d="M3.5 12h17a8.5 8.5 0 0 1-17 0Z"/><path d="M9 8.5c0-1.2 1-1.5 1-2.7S9 4.3 9 3.5M13.5 8.5c0-1.2 1-1.5 1-2.7s-1-1.5-1-2.3"/></svg>Food</button>
+    <button data-tab="weight"><svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="4"/><path d="M8.5 10a4.6 4.6 0 0 1 7 0"/><path d="M12 10.8l1.2-1.6"/></svg>Weight</button>
+    <button data-tab="library"><svg viewBox="0 0 24 24"><path d="M4 5.5c2.7-1 5.3-1 8 .8 2.7-1.8 5.3-1.8 8-.8v13c-2.7-1-5.3-1-8 .8-2.7-1.8-5.3-1.8-8-.8Z"/><path d="M12 6.3v13"/></svg>Recipes</button>
+    <button data-tab="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>Settings</button>
   </nav>
 
   <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">

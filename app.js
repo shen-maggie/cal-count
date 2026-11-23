@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '10';
+const APP_VERSION = '11';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -203,7 +203,7 @@ function weekStats(wk) {
 }
 function openRecap(wk = weekId(addDays(dayKey(), -7))) {
   const r = weekStats(wk), unit = S.settings.weightUnit, cur = weekId(dayKey());
-  const stat = (label, val, sub = '') => `<div class="card" style="background:var(--bg);margin:0"><div class="small muted">${label}</div><div style="font-size:22px;font-weight:700">${val}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
+  const stat = (label, val, sub = '') => `<div class="card stat" style="margin:0"><div class="small muted">${label}</div><div style="font-family:var(--font-display);font-size:24px;font-weight:600">${val}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
   openSheet(`<div class="row between"><h2>Weekly recap</h2><button class="icon" id="rcX">✕</button></div>
     <div class="row between"><button class="icon" id="rcPrev">‹</button><b>${fmtDay(wk)} – ${fmtDay(addDays(wk, 6))}${wk === cur ? ' (so far)' : ''}</b><button class="icon" id="rcNext" ${wk >= cur ? 'disabled style="opacity:.3"' : ''}>›</button></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
@@ -266,10 +266,14 @@ function confirmDialog({ title, body, ok = 'OK', cancel = 'Cancel', danger = fal
 function closeSheetSilently() { closeSheet(); }
 
 // ---------- Home ----------
-function ringSVG(pct, color) {
+// Ring with an inked outline on both edges, like a hand-drawn gauge
+function ringSVG(pct, color, id = 'ringArc') {
   const r = 115, c = 2 * Math.PI * r, p = Math.min(1, Math.max(0, pct));
-  return `<svg width="260" height="260" viewBox="0 0 260 260"><circle cx="130" cy="130" r="${r}" stroke="#273449" stroke-width="18" fill="none"/>
-    <circle id="ringArc" cx="130" cy="130" r="${r}" stroke="${color}" stroke-width="18" fill="none" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p)}"/></svg>`;
+  return `<svg viewBox="0 0 260 260">
+    <circle cx="130" cy="130" r="${r}" style="stroke:var(--track)" stroke-width="22" fill="none"/>
+    <circle cx="130" cy="130" r="${r + 12}" style="stroke:var(--ink)" stroke-width="2.5" fill="none"/>
+    <circle cx="130" cy="130" r="${r - 12}" style="stroke:var(--ink)" stroke-width="2.5" fill="none"/>
+    <circle id="${id}" cx="130" cy="130" r="${r}" style="stroke:${color}" stroke-width="19" fill="none" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p)}"/></svg>`;
 }
 function streakHTML() {
   const { streak, frozen, todayDone } = computeStreak();
@@ -284,7 +288,7 @@ function renderHome() {
     view.innerHTML = `
       <div class="card center">
         ${streakHTML()}
-        <div class="ring-wrap">${ringSVG((Date.now() - f.start) / goalMs, '#22c55e')}
+        <div class="ring-wrap">${ringSVG((Date.now() - f.start) / goalMs, 'var(--accent)')}
           <div class="ring-center"><div class="ring-label">Fasting</div><div class="ring-time" id="tElapsed"></div><div class="ring-label" id="tRemain"></div></div></div>
         <div class="row between small muted"><span>Started ${fmtTime(f.start)} ${dayLabelFor(f.start)}</span><span>Goal ${fmtTime(f.start + goalMs)} ${dayLabelFor(f.start + goalMs)}</span></div>
         <div style="margin-top:14px" class="btn-grid">
@@ -316,24 +320,28 @@ function renderHome() {
     const plan = currentPlan();
     const planPill = !plan ? '' : plan.start > Date.now() ? `<span class="pill">Fast starts ${fmtTime(plan.start)}${dayLabelFor(plan.start) === 'today' ? '' : ' ' + dayLabelFor(plan.start)}</span>`
       : `<span class="pill amber">Fast was due ${fmtTime(plan.start)}</span>`;
+    const over = todayK > st.calorieGoal;
+    const mealIco = { breakfast: '🍳', lunch: '🥗', dinner: '🍲', snacks: '🍓' };
     view.innerHTML = `
       <div class="card">
         <div class="row between">${streakHTML()}<span class="small muted">Since last fast: <b id="tSince">${last ? '' : '—'}</b></span></div>
       </div>
-      <div class="card">
-        <div class="row between"><div><div class="big-num">${todayK}</div><div class="small muted">of ${st.calorieGoal} kcal · ${Math.max(0, st.calorieGoal - todayK)} left</div></div>
-        ${planPill}</div>
-        <div class="bar ${todayK > st.calorieGoal ? 'over' : ''}" style="margin-top:10px"><div style="width:${pct * 100}%"></div></div>
-        ${weekBudgetHTML()}
+      <div class="card center">
+        ${planPill}
+        <div class="ring-wrap sm">${ringSVG(pct, over ? 'var(--danger)' : 'var(--berry)', 'calArc')}
+          <div class="ring-center"><div class="big-num">${Math.abs(st.calorieGoal - todayK).toLocaleString()}</div>
+            <div class="ring-label">kcal ${over ? 'over' : 'left'}</div>
+            <div class="small muted" style="margin-top:4px">${todayK.toLocaleString()} of ${st.calorieGoal.toLocaleString()} eaten</div></div></div>
+        <div style="text-align:left">${weekBudgetHTML()}</div>
       </div>
       <div class="card">
         <h2>Log food</h2>
-        <div class="meal-btns">${enabledMeals().map(m => `<button class="meal-btn" data-meal="${m.id}">${m.label}<small>${sumKcal(foodsOn(dayKey()).filter(x => x.meal === m.id))} kcal</small></button>`).join('')}</div>
-        <div class="btn-grid" style="margin-top:10px"><button class="btn blue" id="snapBtn">📷 Snap a photo</button><button class="btn" id="quickBtn">⚡ Quick add</button></div>
-        <button class="btn" id="mineBtn" style="margin-top:8px">📖 My recipes & foods</button>
+        <div class="meal-btns">${enabledMeals().map(m => `<button class="meal-btn" data-meal="${m.id}"><span class="ico">${mealIco[m.id]}</span>${m.label}<small>${sumKcal(foodsOn(dayKey()).filter(x => x.meal === m.id))} kcal</small></button>`).join('')}</div>
+        <div class="btn-grid" style="margin-top:12px"><button class="btn blue" id="snapBtn">📷 Snap a photo</button><button class="btn" id="quickBtn">⚡ Quick add</button></div>
+        <button class="btn" id="mineBtn" style="margin-top:10px">📖 My recipes & foods</button>
       </div>
-      <button class="btn primary" id="startFast">Start ${st.fastHours}h fast</button>
-      <div class="center"><button class="link" id="startEarlier">Started earlier? Set start time</button> · <button class="link" id="recapBtn">📊 Weekly recap</button></div>`;
+      <button class="btn primary" id="startFast">🌙 Start ${st.fastHours}h fast</button>
+      <div class="center" style="margin-top:6px"><button class="link" id="startEarlier">Started earlier?</button> · <button class="link" id="recapBtn">Weekly recap</button></div>`;
     if (last) { const tick = () => { const el = document.getElementById('tSince'); if (el) el.textContent = fmtDur(Date.now() - last.end, false); }; tick(); setTick(tick); } else setTick(null);
     view.querySelectorAll('.meal-btn').forEach(b => b.onclick = () => openLogSheet(b.dataset.meal, 'library'));
     document.getElementById('mineBtn').onclick = () => openLogSheet(guessMeal(), 'library');
@@ -686,7 +694,7 @@ function renderWeight() {
       <div class="small" style="text-align:right">${weekAgo ? `7d: <b>${delta(latest.value - weekAgo.value)}</b><br>` : ''}Total: <b>${delta(latest.value - first.value)}</b></div></div>
       <div class="seg" style="margin-top:12px" id="rangeSeg">${['30', '90', '365', 'all'].map(r => `<button data-r="${r}" class="${weightRange === r ? 'active' : ''}">${r === 'all' ? 'All' : r === '365' ? '1y' : r + 'd'}</button>`).join('')}</div>
       <div class="chart" id="chart"></div>
-      <div class="small muted"><span style="color:#38bdf8">●</span> daily weigh-in &nbsp; <span style="color:#22c55e">━</span> 7-day trend</div>
+      <div class="small muted"><span style="color:#e8616b">●</span> daily weigh-in &nbsp; <span style="color:#86ad63">━</span> 7-day trend</div>
     </div>
     <div class="card"><h3>History</h3><ul class="list">${[...ws].reverse().slice(0, 60).map(w => `<li><span class="name">${fmtDay(w.date)}</span><span class="kcal">${w.value} ${unit}</span><button class="icon" data-delw="${w.date}">✕</button></li>`).join('')}</ul></div>` : '<div class="card muted">Log your first weigh-in to see your trend.</div>'}`;
   document.getElementById('wAdd').onclick = () => {
@@ -715,11 +723,11 @@ function drawChart(el, ws) {
   const y = v => P.t + (hi - v) / (hi - lo) * (H - P.t - P.b);
   const ticks = [lo + pad, (lo + hi) / 2, hi - pad];
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">
-    ${ticks.map(t => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" stroke="#334155" stroke-dasharray="3 3"/><text x="${P.l - 4}" y="${y(t) + 4}" fill="#94a3b8" font-size="10" text-anchor="end">${t.toFixed(1)}</text>`).join('')}
-    <text x="${P.l}" y="${H - 6}" fill="#94a3b8" font-size="10">${fmtDay(pts[0].date)}</text>
-    <text x="${W - P.r}" y="${H - 6}" fill="#94a3b8" font-size="10" text-anchor="end">${fmtDay(pts[pts.length - 1].date)}</text>
-    ${tr.length > 1 ? `<polyline fill="none" stroke="#22c55e" stroke-width="2.5" points="${tr.map(p => `${x(p.date)},${y(p.value)}`).join(' ')}"/>` : ''}
-    ${pts.map(p => `<circle cx="${x(p.date)}" cy="${y(p.value)}" r="3" fill="#38bdf8"/>`).join('')}
+    ${ticks.map(t => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" stroke="#e8d8c0" stroke-dasharray="3 3"/><text x="${P.l - 4}" y="${y(t) + 4}" fill="#9b8172" font-size="10" text-anchor="end">${t.toFixed(1)}</text>`).join('')}
+    <text x="${P.l}" y="${H - 6}" fill="#9b8172" font-size="10">${fmtDay(pts[0].date)}</text>
+    <text x="${W - P.r}" y="${H - 6}" fill="#9b8172" font-size="10" text-anchor="end">${fmtDay(pts[pts.length - 1].date)}</text>
+    ${tr.length > 1 ? `<polyline fill="none" stroke="#86ad63" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${tr.map(p => `${x(p.date)},${y(p.value)}`).join(' ')}"/>` : ''}
+    ${pts.map(p => `<circle cx="${x(p.date)}" cy="${y(p.value)}" r="3.5" fill="#e8616b" stroke="#5b3d2e" stroke-width="1"/>`).join('')}
   </svg>`;
 }
 
@@ -821,7 +829,7 @@ function renderSettings() {
       ${st.sameEveryDay ? `<label>First meal (fast ends) at</label><input type="time" id="sEat" value="${st.eatStart}">
       <p class="small muted">Eating ${hm12(st.eatStart)}–${hm12(hmFromMin(parseHM(st.eatStart) + (24 - st.fastHours) * 60))}. You'll be reminded at ${hm12(hmFromMin(parseHM(st.eatStart) - st.fastHours * 60))} to start your fast if you haven't.</p>`
       : `<p class="small muted">Set when you eat your first meal each day. Your fast ends then and starts ${st.fastHours}h earlier, which is when you're reminded. Turn a day off to skip fasting (it won't break your streak).</p>
-      ${[0, 1, 2, 3, 4, 5, 6].map(i => (i + st.weekStart) % 7).map(d => { const sc = st.schedule[d]; return `<div class="row" style="padding:6px 0;border-bottom:1px solid #334155"><input type="checkbox" data-son="${d}" ${sc.on ? 'checked' : ''} style="width:auto;transform:scale(1.2)"><b style="width:40px">${DAY_NAMES[d]}</b><input type="time" data-seat="${d}" value="${sc.eat}" ${sc.on ? '' : 'disabled'} style="width:130px"><span class="small muted grow" style="text-align:right">${sc.on ? `fast starts ${parseHM(sc.eat) - st.fastHours * 60 < 0 ? DAY_NAMES[(d + 6) % 7] + ' ' : ''}${hm12(hmFromMin(parseHM(sc.eat) - st.fastHours * 60))}` : 'no fast'}</span></div>`; }).join('')}`}
+      ${[0, 1, 2, 3, 4, 5, 6].map(i => (i + st.weekStart) % 7).map(d => { const sc = st.schedule[d]; return `<div class="row" style="padding:6px 0;border-bottom:1.5px dashed var(--line-soft)"><input type="checkbox" data-son="${d}" ${sc.on ? 'checked' : ''} style="width:auto;transform:scale(1.2)"><b style="width:40px">${DAY_NAMES[d]}</b><input type="time" data-seat="${d}" value="${sc.eat}" ${sc.on ? '' : 'disabled'} style="width:130px"><span class="small muted grow" style="text-align:right">${sc.on ? `fast starts ${parseHM(sc.eat) - st.fastHours * 60 < 0 ? DAY_NAMES[(d + 6) % 7] + ' ' : ''}${hm12(hmFromMin(parseHM(sc.eat) - st.fastHours * 60))}` : 'no fast'}</span></div>`; }).join('')}`}
       <div class="switch"><span>Fast reminders</span><input type="checkbox" id="sRem" ${st.reminders ? 'checked' : ''}></div>
       <p class="small muted">Notifications: <b>${notifState}</b>${standalone ? '' : ' · On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then enable here.'}</p>
       <div class="btn-grid"><button class="btn" id="sNotif">Enable notifications</button><button class="btn" id="sIcs">📅 Add to calendar</button></div>

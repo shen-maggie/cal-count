@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
+  <defs>
+    <path id="body" d="M256 168 C 352 156, 414 208, 402 292 C 392 362, 316 432, 256 448 C 196 432, 120 362, 110 292 C 98 208, 160 156, 256 168 Z"/>
+    <clipPath id="clipBody"><use href="#body"/></clipPath>
+    <mask id="bite" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="white"/>
+      <circle cx="386" cy="232" r="50" fill="black"/>
+      <circle cx="398" cy="300" r="42" fill="black"/>
+      <circle cx="366" cy="180" r="30" fill="black"/>
+    </mask>
+  </defs>
+  <rect width="512" height="512" fill="#f7efe1"/>
+  <circle cx="256" cy="270" r="200" fill="#f9dfd6"/>
+  <!-- shadow -->
+  <ellipse cx="262" cy="462" rx="110" ry="14" fill="#5b3d2e" opacity=".12"/>
+  <!-- body -->
+  <g mask="url(#bite)">
+    <use href="#body" fill="#e8616b"/>
+    <g clip-path="url(#clipBody)">
+      <path d="M150 230 C 140 300, 180 380, 250 430" stroke="#f08a90" stroke-width="26" fill="none" stroke-linecap="round" opacity=".7"/>
+      <!-- seeds -->
+      <g fill="#f8dc8c" stroke="#5b3d2e" stroke-width="3">
+        <ellipse cx="190" cy="236" rx="7" ry="10" transform="rotate(-20 190 236)"/>
+        <ellipse cx="256" cy="226" rx="7" ry="10"/>
+        <ellipse cx="322" cy="238" rx="7" ry="10" transform="rotate(20 322 238)"/>
+        <ellipse cx="160" cy="300" rx="7" ry="10" transform="rotate(-25 160 300)"/>
+        <ellipse cx="222" cy="292" rx="7" ry="10" transform="rotate(-10 222 292)"/>
+        <ellipse cx="290" cy="292" rx="7" ry="10" transform="rotate(10 290 292)"/>
+        <ellipse cx="350" cy="300" rx="7" ry="10" transform="rotate(25 350 300)"/>
+        <ellipse cx="196" cy="356" rx="7" ry="10" transform="rotate(-20 196 356)"/>
+        <ellipse cx="256" cy="354" rx="7" ry="10"/>
+        <ellipse cx="316" cy="356" rx="7" ry="10" transform="rotate(20 316 356)"/>
+        <ellipse cx="228" cy="408" rx="6" ry="9" transform="rotate(-15 228 408)"/>
+        <ellipse cx="284" cy="408" rx="6" ry="9" transform="rotate(15 284 408)"/>
+      </g>
+      <!-- pale flesh where the bite is -->
+      <g fill="none" stroke="#fcd9d3" stroke-width="48">
+        <circle cx="386" cy="232" r="50"/><circle cx="398" cy="300" r="42"/><circle cx="366" cy="180" r="30"/>
+      </g>
+    </g>
+    <use href="#body" fill="none" stroke="#5b3d2e" stroke-width="12" stroke-linejoin="round"/>
+  </g>
+  <!-- bite outline -->
+  <g fill="none" stroke="#5b3d2e" stroke-width="14" clip-path="url(#clipBody)">
+    <circle cx="386" cy="232" r="50"/><circle cx="398" cy="300" r="42"/><circle cx="366" cy="180" r="30"/>
+  </g>
+  <g fill="#f9dfd6" clip-path="url(#clipBody)">
+    <circle cx="386" cy="232" r="50"/><circle cx="398" cy="300" r="42"/><circle cx="366" cy="180" r="30"/>
+  </g>
+  <!-- leaves -->
+  <g fill="#8fb174" stroke="#5b3d2e" stroke-width="10" stroke-linejoin="round">
+    <path d="M256 176 C 220 196, 170 196, 150 172 C 180 152, 226 156, 256 176 Z"/>
+    <path d="M256 176 C 292 196, 342 196, 362 172 C 332 152, 286 156, 256 176 Z"/>
+    <path d="M256 178 C 232 158, 214 130, 222 104 C 250 112, 266 146, 256 178 Z"/>
+    <path d="M256 178 C 280 158, 298 130, 290 104 C 262 112, 246 146, 256 178 Z"/>
+  </g>
+  <path d="M256 150 C 258 120, 266 98, 282 82" stroke="#5b3d2e" stroke-width="12" fill="none" stroke-linecap="round"/>
+  <!-- highlight -->
+  <path d="M150 262 C 152 240, 162 222, 178 212" stroke="#fff" stroke-width="12" fill="none" stroke-linecap="round" opacity=".85"/>
+</svg>
