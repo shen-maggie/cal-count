@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '4';
+const APP_VERSION = '5';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -282,7 +282,7 @@ function openLogSheet(meal, mode = 'quick', date = dayKey()) {
       <label>Meal</label>
       <select id="mealSel">${enabledMeals().map(m => `<option value="${m.id}" ${m.id === state.meal ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       <div class="seg" style="margin-top:12px">
-        ${[['quick', '⚡ Quick'], ['photo', '📷 AI photo'], ['library', '📖 My foods']].map(([k, l]) => `<button data-mode="${k}" class="${state.mode === k ? 'active' : ''}">${l}</button>`).join('')}
+        ${[['quick', '⚡ Quick'], ['photo', '📷 AI photo'], ['library', '🔎 Search']].map(([k, l]) => `<button data-mode="${k}" class="${state.mode === k ? 'active' : ''}">${l}</button>`).join('')}
       </div>
       <div id="modeBody"></div>`);
     document.getElementById('x').onclick = closeSheet;
@@ -300,28 +300,47 @@ function drawQuick(el, state) {
     <details style="margin-top:8px"><summary class="small muted">Macros (optional)</summary>
       <div class="row"><div class="grow"><label>Protein g</label><input id="qp" type="number" inputmode="decimal"></div><div class="grow"><label>Carbs g</label><input id="qc" type="number" inputmode="decimal"></div><div class="grow"><label>Fat g</label><input id="qf" type="number" inputmode="decimal"></div></div></details>
     <button class="btn primary" id="qAdd" style="margin-top:14px">Add</button>`;
-  setTimeout(() => document.getElementById('qk').focus(), 50);
+  setTimeout(() => document.getElementById('qk')?.focus(), 50);
   document.getElementById('qAdd').onclick = () => {
     const kcal = +document.getElementById('qk').value; if (!kcal) return toast('Enter calories');
     addFoods([{ name: document.getElementById('qn').value || 'Quick add', kcal, protein: document.getElementById('qp').value, carbs: document.getElementById('qc').value, fat: document.getElementById('qf').value, source: 'quick' }], state.meal, state.date);
   };
 }
 
+// Common foods (foods.js) as objects, per 100 g
+const CF = (typeof COMMON_FOODS !== 'undefined' ? COMMON_FOODS : []).map(([name, kcal, p, c, f, srvLabel, srvG], i) => ({ i, name, kcal, p, c, f, srvLabel, srvG }));
+const cfScale = (food, grams) => ({ kcal: food.kcal * grams / 100, protein: food.p * grams / 100, carbs: food.c * grams / 100, fat: food.f * grams / 100 });
+function searchCommon(q, limit = 40) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  return CF.filter(f => words.every(w => f.name.toLowerCase().includes(w)))
+    .sort((a, b) => a.name.toLowerCase().indexOf(words[0]) - b.name.toLowerCase().indexOf(words[0]) || a.i - b.i).slice(0, limit);
+}
+// Saved copy of a common food so recipes can use it like any ingredient
+function ingredientFromCommon(food) {
+  let ing = S.ingredients.find(i => i.name.toLowerCase() === food.name.toLowerCase() && i.unit === 'g');
+  if (!ing) { ing = { id: uid(), name: food.name, unit: 'g', unitSize: 100, kcalPerUnit: food.kcal, common: true }; S.ingredients.push(ing); save(); }
+  return ing;
+}
+
 function drawLibraryPick(el, state) {
-  if (!S.ingredients.length && !S.recipes.length) { el.innerHTML = `<p class="muted">No saved ingredients or recipes yet. Add them in the Recipes tab.</p>`; return; }
   el.innerHTML = `
-    <input id="libSearch" placeholder="Search…">
-    <ul class="list" id="libList"></ul>`;
+    <input id="libSearch" placeholder="Search foods, e.g. chicken, apple, rice…" autocomplete="off">
+    <ul class="list" id="libList"></ul>
+    <p class="small muted">Common foods use USDA averages. Amounts are in grams unless noted.</p>`;
   const list = document.getElementById('libList');
   const draw = q => {
-    q = (q || '').toLowerCase();
+    q = (q || '').toLowerCase().trim();
     const recs = S.recipes.filter(r => r.name.toLowerCase().includes(q)).map(r => `<li><span class="name">🍲 ${esc(r.name)}<br><span class="small muted">${Math.round(recipePerServing(r))} kcal / serving</span></span><input type="number" inputmode="decimal" value="1" step="0.25" style="width:70px" data-r="${r.id}"><span class="small muted">srv</span><button class="btn small primary" data-addr="${r.id}">Add</button></li>`);
-    const ings = S.ingredients.filter(i => i.name.toLowerCase().includes(q)).map(i => `<li><span class="name">🥕 ${esc(i.name)}<br><span class="small muted">${i.kcalPerUnit} kcal / ${i.unitSize} ${esc(i.unit)}</span></span><input type="number" inputmode="decimal" value="${i.unitSize}" style="width:70px" data-i="${i.id}"><span class="small muted">${esc(i.unit)}</span><button class="btn small primary" data-addi="${i.id}">Add</button></li>`);
-    list.innerHTML = recs.concat(ings).join('') || '<li class="muted">No matches</li>';
+    const ings = S.ingredients.filter(i => !i.common && i.name.toLowerCase().includes(q)).map(i => `<li><span class="name">🥕 ${esc(i.name)}<br><span class="small muted">${i.kcalPerUnit} kcal / ${i.unitSize} ${esc(i.unit)}</span></span><input type="number" inputmode="decimal" value="${i.unitSize}" style="width:70px" data-i="${i.id}"><span class="small muted">${esc(i.unit)}</span><button class="btn small primary" data-addi="${i.id}">Add</button></li>`);
+    const commons = searchCommon(q).map(f => `<li><span class="name">${esc(f.name)}<br><span class="small muted">${f.kcal} kcal/100 g · ${esc(f.srvLabel)} = ${f.srvG} g (${Math.round(f.kcal * f.srvG / 100)})</span></span><input type="number" inputmode="decimal" value="${f.srvG}" style="width:70px" data-c="${f.i}"><span class="small muted">g</span><button class="btn small primary" data-addc="${f.i}">Add</button></li>`);
+    list.innerHTML = recs.concat(ings, commons).join('') || `<li class="muted">${q ? 'No matches. Try Quick add or create an ingredient in the Recipes tab.' : 'Type to search common foods.'}</li>`;
     list.querySelectorAll('[data-addr]').forEach(b => b.onclick = () => { const r = S.recipes.find(x => x.id === b.dataset.addr); const srv = +list.querySelector(`[data-r="${r.id}"]`).value || 1; addFoods([{ name: `${r.name} (${srv} srv)`, kcal: recipePerServing(r) * srv, source: 'recipe' }], state.meal, state.date); });
     list.querySelectorAll('[data-addi]').forEach(b => b.onclick = () => { const i = ingById(b.dataset.addi); const q = +list.querySelector(`[data-i="${i.id}"]`).value || 0; addFoods([{ name: `${i.name} (${q} ${i.unit})`, kcal: ingKcal(i, q), source: 'ingredient' }], state.meal, state.date); });
+    list.querySelectorAll('[data-addc]').forEach(b => b.onclick = () => { const f = CF[+b.dataset.addc]; const g = +list.querySelector(`[data-c="${f.i}"]`).value || 0; addFoods([{ name: `${f.name} (${g} g)`, ...cfScale(f, g), source: 'common' }], state.meal, state.date); });
   };
   draw(''); document.getElementById('libSearch').oninput = e => draw(e.target.value);
+  setTimeout(() => document.getElementById('libSearch')?.focus(), 50);
 }
 
 // ---------- AI photo estimation (Gemini or Claude API, called directly from the browser) ----------
@@ -593,7 +612,7 @@ function renderLibrary() {
   const body = document.getElementById('libBody');
   if (libMode === 'ingredients') {
     body.innerHTML = `<button class="btn primary" id="newIng">+ New ingredient</button>
-      <div class="card" style="margin-top:12px"><ul class="list">${S.ingredients.map(i => `<li><span class="name">${esc(i.name)}<br><span class="small muted">${i.kcalPerUnit} kcal per ${i.unitSize} ${esc(i.unit)}</span></span><button class="icon" data-edi="${i.id}">✎</button><button class="icon" data-deli="${i.id}">✕</button></li>`).join('') || '<li class="muted">No ingredients yet. Add the ones you use often, from a nutrition label.</li>'}</ul></div>`;
+      <div class="card" style="margin-top:12px"><ul class="list">${S.ingredients.map(i => `<li><span class="name">${esc(i.name)}<br><span class="small muted">${i.kcalPerUnit} kcal per ${i.unitSize} ${esc(i.unit)}</span></span><button class="icon" data-edi="${i.id}">✎</button><button class="icon" data-deli="${i.id}">✕</button></li>`).join('') || '<li class="muted">No custom ingredients yet. Common foods (chicken, rice, apples…) are built in. Add your own here from a nutrition label.</li>'}</ul></div>`;
     document.getElementById('newIng').onclick = () => ingredientSheet();
     body.querySelectorAll('[data-edi]').forEach(b => b.onclick = () => ingredientSheet(ingById(b.dataset.edi)));
     body.querySelectorAll('[data-deli]').forEach(b => b.onclick = async () => {
@@ -635,7 +654,7 @@ function recipeSheet(rec) {
       <label>Servings it makes</label><input id="rS" type="number" inputmode="decimal" value="${r.servings}">
       <h3 style="margin-top:14px">Ingredients</h3>
       <ul class="list">${r.items.map((it, n) => { const ing = ingById(it.ingId); return `<li><span class="name">${esc(ing?.name || '?')}</span><input type="number" inputmode="decimal" value="${it.qty}" data-q="${n}" style="width:70px"><span class="small muted">${esc(ing?.unit || '')}</span><span class="kcal" style="width:60px;text-align:right">${Math.round(ingKcal(ing, it.qty))}</span><button class="icon" data-rm="${n}">✕</button></li>`; }).join('') || '<li class="muted small">No ingredients added</li>'}</ul>
-      <div class="row" style="margin-top:8px"><select id="rAddSel" class="grow"><option value="">Add ingredient…</option>${S.ingredients.map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('')}<option value="__new">+ Create new ingredient</option></select></div>
+      <div style="margin-top:8px"><input id="rSearch" placeholder="Add ingredient: search foods…" autocomplete="off"><ul class="list" id="rResults"></ul></div>
       <div class="row between" style="margin-top:12px"><span class="muted">Total ${Math.round(recipeKcal(r))} kcal</span><b>${Math.round(recipePerServing(r))} kcal / serving</b></div>
       <button class="btn primary" id="rSave" style="margin-top:14px">Save recipe</button>`);
     const sync = () => { r.name = document.getElementById('rN').value; r.servings = +document.getElementById('rS').value || 1; };
@@ -643,10 +662,19 @@ function recipeSheet(rec) {
     document.getElementById('rS').onchange = () => { sync(); draw(); };
     sheetBody.querySelectorAll('[data-q]').forEach(inp => inp.onchange = () => { sync(); r.items[+inp.dataset.q].qty = +inp.value; draw(); });
     sheetBody.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { sync(); r.items.splice(+b.dataset.rm, 1); draw(); });
-    document.getElementById('rAddSel').onchange = e => {
-      sync();
-      if (e.target.value === '__new') return ingredientSheet(null, ing => { r.items.push({ ingId: ing.id, qty: ing.unitSize }); draw(); });
-      const ing = ingById(e.target.value); if (ing) { r.items.push({ ingId: ing.id, qty: ing.unitSize }); draw(); }
+    const rRes = document.getElementById('rResults');
+    const addIng = ing => { sync(); r.items.push({ ingId: ing.id, qty: ing.unitSize }); draw(); };
+    document.getElementById('rSearch').oninput = e => {
+      const q = e.target.value.trim().toLowerCase();
+      if (!q) { rRes.innerHTML = ''; return; }
+      const mine = S.ingredients.filter(i => i.name.toLowerCase().includes(q)).slice(0, 8);
+      const commons = searchCommon(q, 12).filter(f => !mine.some(i => i.name.toLowerCase() === f.name.toLowerCase()));
+      rRes.innerHTML = mine.map(i => `<li><span class="name">🥕 ${esc(i.name)} <span class="small muted">${i.kcalPerUnit} kcal/${i.unitSize} ${esc(i.unit)}</span></span><button class="btn small" data-mi="${i.id}">Add</button></li>`).join('')
+        + commons.map(f => `<li><span class="name">${esc(f.name)} <span class="small muted">${f.kcal} kcal/100 g</span></span><button class="btn small" data-ci="${f.i}">Add</button></li>`).join('')
+        + `<li><span class="name muted">Not here?</span><button class="btn small" data-new="1">+ New ingredient</button></li>`;
+      rRes.querySelectorAll('[data-mi]').forEach(b => b.onclick = () => addIng(ingById(b.dataset.mi)));
+      rRes.querySelectorAll('[data-ci]').forEach(b => b.onclick = () => { const f = CF[+b.dataset.ci]; const ing = ingredientFromCommon(f); sync(); r.items.push({ ingId: ing.id, qty: f.srvG }); draw(); });
+      rRes.querySelector('[data-new]').onclick = () => { sync(); ingredientSheet(null, ing => { r.items.push({ ingId: ing.id, qty: ing.unitSize }); draw(); }); };
     };
     document.getElementById('rSave').onclick = () => {
       sync(); if (!r.name.trim()) return toast('Give the recipe a name');
