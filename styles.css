@@ -186,3 +186,18 @@ input::-webkit-date-and-time-value { text-align: left; }
 .theme-opt.active { background: var(--card); outline: 3px solid var(--accent); outline-offset: 1px; }
 .theme-opt .sw { display: flex; gap: 0; margin-bottom: 6px; border: 1.5px solid var(--ink); border-radius: 8px; overflow: hidden; }
 .theme-opt .sw i { flex: 1; height: 18px; display: block; }
+
+/* Settings menu: grouped rows like a native settings screen */
+.menu-head { color: var(--on-bg); font-family: var(--font-display); font-size: 13px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; margin: 18px 4px 6px; opacity: .85; }
+.card.menu { padding: 2px 14px; }
+.menu-row { display: flex; align-items: center; gap: 12px; width: 100%; background: none; border: 0; border-bottom: 1.5px dashed var(--line-soft); padding: 12px 0; text-align: left; color: var(--text); }
+.menu-row:last-child { border-bottom: 0; }
+.menu-row:active { opacity: .6; }
+.menu-ico { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; font-size: 19px; border-radius: 12px; background: var(--card2); border: 1.5px solid var(--ink); }
+.menu-label { display: block; font-family: var(--font-display); font-size: 17px; font-weight: 500; }
+.menu-sub { display: block; font-size: 13px; color: var(--muted); margin-top: 1px; }
+.menu-chev { width: 20px; height: 20px; flex: 0 0 20px; fill: none; stroke: var(--muted); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.back-link { color: var(--on-bg) !important; text-decoration: none !important; font-size: 16px !important; padding: 2px 2px 10px !important; }
+.unit-in { position: relative; }
+.unit-in input { padding-right: 40px; }
+.unit-in span { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 600; pointer-events: none; }

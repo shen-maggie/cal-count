@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '23';
+const APP_VERSION = '24';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -23,6 +23,12 @@ const DEFAULT_STATE = {
     streakFreeze: true,
     reminders: true,
     weightUnit: 'lb',
+    sex: '',                    // 'female' | 'male' (for the calorie calculator)
+    age: null,
+    heightCm: null,
+    activity: 1.2,              // activity multiplier, same levels as calculator.net
+    goalRate: -1,               // weight change per week, in the weight unit (lb or kg); negative = lose
+    autoGoal: false,            // keep the daily goal in sync with the calculator as weight changes
     theme: 'cocoa',             // cocoa | auto | spring | summer | autumn | winter
     aiProvider: 'gemini',       // 'gemini' (free tier) or 'claude' (paid API)
     geminiKey: '',
@@ -245,14 +251,16 @@ function maybeShowRecap() {
 
 // ---------- UI shell ----------
 let tab = 'home';
+let settingsSec = null; // which Settings category is open (null = the menu)
 let foodDay = dayKey();
 const view = document.getElementById('view');
-document.querySelectorAll('.tabbar button').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); window.scrollTo(0, 0); });
+document.querySelectorAll('.tabbar button').forEach(b => b.onclick = () => { tab = b.dataset.tab; settingsSec = null; render(); window.scrollTo(0, 0); });
 
 function render() {
+  applyAutoGoal();
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   const titles = { home: activeFast() ? 'Fasting' : 'Eating window', food: 'Food log', weight: 'Weight', library: 'Ingredients & recipes', settings: 'Settings' };
-  document.getElementById('pageTitle').textContent = titles[tab];
+  document.getElementById('pageTitle').textContent = tab === 'settings' && settingsSec ? SETTINGS_SECS[settingsSec].label : titles[tab];
   ({ home: renderHome, food: renderFood, weight: renderWeight, library: renderLibrary, settings: renderSettings })[tab]();
 }
 
@@ -842,13 +850,118 @@ function recipeSheet(rec) {
 }
 
 // ---------- Settings ----------
+
+// ---------- Calorie calculator (same formulas as calculator.net) ----------
+// BMR: Mifflin-St Jeor. Maintenance = BMR × activity. 1 lb of body weight ≈ 3,500 kcal, 1 kg ≈ 7,700 kcal.
+const ACTIVITY = [
+  [1.2, 'Sedentary', 'little or no exercise'],
+  [1.375, 'Light', 'exercise 1–3 times a week'],
+  [1.465, 'Moderate', 'exercise 4–5 times a week'],
+  [1.55, 'Active', 'daily exercise, or intense exercise 3–4 times a week'],
+  [1.725, 'Very active', 'intense exercise 6–7 times a week'],
+  [1.9, 'Extra active', 'very intense exercise daily, or a physical job'],
+];
+const GOAL_RATES = { lb: [-2, -1.5, -1, -0.5, 0, 0.5, 1], kg: [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5] };
+function latestWeight() { return S.weights.length ? [...S.weights].sort((a, b) => a.date < b.date ? 1 : -1)[0].value : null; }
+function calorieCalc() {
+  const st = S.settings, w = latestWeight();
+  if (!st.sex || !st.age || !st.heightCm || !w) return null;
+  const kg = st.weightUnit === 'kg' ? w : w * 0.45359237;
+  const bmr = 10 * kg + 6.25 * st.heightCm - 5 * st.age + (st.sex === 'male' ? 5 : -161);
+  const maintain = bmr * st.activity;
+  const perUnit = st.weightUnit === 'kg' ? 7700 : 3500;
+  const target = maintain + (st.goalRate * perUnit) / 7;
+  const floor = st.sex === 'male' ? 1500 : 1200;
+  const round = n => Math.round(n / 10) * 10;
+  return { bmr: round(bmr), maintain: round(maintain), target: round(Math.max(target, 0)), floor, low: target < floor };
+}
+function rateLabel(r, u) { return r === 0 ? 'Maintain weight' : `${r < 0 ? 'Lose' : 'Gain'} ${Math.abs(r)} ${u} a week`; }
+function applyAutoGoal() {
+  if (!S.settings.autoGoal) return;
+  const c = calorieCalc();
+  if (c && c.target && S.settings.calorieGoal !== c.target) { S.settings.calorieGoal = c.target; save(); }
+}
+const SETTINGS_SECS = {
+  account:  { label: 'Account', icon: '👤' },
+  goal:     { label: 'Calorie goal', icon: '🎯', sub: 'Body stats, maintenance, weekly budget' },
+  fasting:  { label: 'Fasting', icon: '⏱️', sub: 'Schedule and streak' },
+  meals:    { label: 'Meals', icon: '🍽️', sub: 'Which meals to show' },
+  remind:   { label: 'Reminders', icon: '🔔', sub: 'Notifications and calendar' },
+  look:     { label: 'Appearance', icon: '🎨', sub: 'Color palette' },
+  units:    { label: 'Units', icon: '⚖️', sub: 'lb or kg' },
+  ai:       { label: 'AI photo logging', icon: '📷', sub: 'Gemini or Claude' },
+  data:     { label: 'Backup & data', icon: '🗄️', sub: 'Export, import, erase' },
+};
+function settingsMenuHTML() {
+  const st = S.settings, c = calorieCalc(), th = THEMES[st.theme === 'auto' ? seasonNow() : st.theme] || THEMES.cocoa;
+  const subs = {
+    account: Cloud.signedIn() ? 'Signed in · syncing' : 'Optional · sign in to sync',
+    goal: `${st.calorieGoal.toLocaleString()} kcal a day${st.autoGoal && c ? ' · auto' : ''}`,
+    fasting: `${st.fastHours}:${24 - st.fastHours}${st.sameEveryDay ? ` · first meal ${hm12(st.eatStart)}` : ' · custom by day'}`,
+    look: st.theme === 'auto' ? `Match season (${th.label})` : th.label,
+    units: st.weightUnit,
+    ai: st.aiProvider === 'claude' ? 'Anthropic Claude' : 'Google Gemini',
+  };
+  const row = k => `<button class="menu-row" data-sec-open="${k}"><span class="menu-ico">${SETTINGS_SECS[k].icon}</span><span class="grow"><span class="menu-label">${SETTINGS_SECS[k].label}</span><span class="menu-sub">${esc(subs[k] || SETTINGS_SECS[k].sub)}</span></span><svg class="menu-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>`;
+  const group = (title, keys) => `${title ? `<div class="menu-head">${title}</div>` : ''}<div class="card menu">${keys.map(row).join('')}</div>`;
+  return group('', ['account']) + group('Goals', ['goal', 'fasting', 'meals']) + group('General', ['remind', 'look', 'units', 'ai']) + group('Data', ['data'])
+    + `<p class="small center" style="color:var(--on-bg);opacity:.8;margin:6px 0 0">App version ${APP_VERSION}</p>`;
+}
+function goalCardHTML() {
+  const st = S.settings, u = st.weightUnit, c = calorieCalc(), w = latestWeight();
+  const ftIn = st.heightCm ? [Math.floor(st.heightCm / 30.48), Math.round((st.heightCm / 2.54) % 12)] : ['', ''];
+  if (ftIn[1] === 12) { ftIn[0]++; ftIn[1] = 0; }
+  return `<div class="card"><h2>About you</h2>
+      <div class="seg" id="gSex">${[['female', 'Female'], ['male', 'Male']].map(([v, l]) => `<button data-sex="${v}" class="${st.sex === v ? 'active' : ''}">${l}</button>`).join('')}</div>
+      <div class="btn-grid">
+        <div><label style="margin-top:0">Age</label><input type="number" inputmode="numeric" id="gAge" value="${st.age || ''}" placeholder="years"></div>
+        <div><label style="margin-top:0">Current weight (${u})</label><input type="number" inputmode="decimal" step="0.1" id="gWt" value="${w ?? ''}" placeholder="${u}"></div>
+      </div>
+      <label>Height</label>
+      ${u === 'kg' ? `<div class="unit-in"><input type="number" inputmode="numeric" id="gCm" value="${st.heightCm ? Math.round(st.heightCm) : ''}"><span>cm</span></div>`
+        : `<div class="btn-grid"><div class="unit-in"><input type="number" inputmode="numeric" id="gFt" value="${ftIn[0]}"><span>ft</span></div><div class="unit-in"><input type="number" inputmode="numeric" id="gIn" value="${ftIn[1]}"><span>in</span></div></div>`}
+      <label>Activity</label><select id="gAct">${ACTIVITY.map(([m, l, d]) => `<option value="${m}" ${st.activity === m ? 'selected' : ''}>${l}: ${d}</option>`).join('')}</select>
+      <p class="small muted">Weight comes from your latest weigh-in. Changing it here logs today's weight.</p></div>
+    <div class="card"><h2>Your goal</h2>
+      <select id="gRate">${GOAL_RATES[u].map(r => `<option value="${r}" ${st.goalRate === r ? 'selected' : ''}>${rateLabel(r, u)}</option>`).join('')}</select>
+      ${c ? `<div class="btn-grid" style="margin-top:12px">
+          <div class="card stat center" style="margin:0;padding:10px"><div class="small muted">Maintenance</div><div class="big-num" style="font-size:28px">${c.maintain.toLocaleString()}</div><div class="small muted">kcal a day</div></div>
+          <div class="card stat center" style="margin:0;padding:10px"><div class="small muted">${st.goalRate === 0 ? 'Target' : rateLabel(st.goalRate, u)}</div><div class="big-num" style="font-size:28px">${c.target.toLocaleString()}</div><div class="small muted">kcal a day</div></div>
+        </div>
+        <p class="small muted">Resting burn (BMR) is ${c.bmr.toLocaleString()} kcal. Estimates use the Mifflin-St Jeor formula, the same as calculator.net.</p>
+        ${c.low ? `<div class="warnbox">That's below ${c.floor.toLocaleString()} kcal a day, the usual minimum for ${st.sex === 'male' ? 'men' : 'women'} without medical supervision. Consider a slower rate.</div>` : ''}
+        <div class="switch"><span>Set my daily goal from this<br><span class="small muted">Updates by itself as your weight changes</span></span><input type="checkbox" id="gAuto" ${st.autoGoal ? 'checked' : ''}></div>`
+      : `<p class="small muted">Fill in everything above to see your maintenance calories and a target for your goal.</p>`}
+    </div>`;
+}
+function bindGoalCard() {
+  const st = S.settings, $ = id => document.getElementById(id);
+  const upd = (k, v) => { st[k] = v; save(); render(); };
+  view.querySelectorAll('[data-sex]').forEach(b => b.onclick = () => upd('sex', b.dataset.sex));
+  $('gAge').onchange = e => upd('age', Math.max(0, Math.round(+e.target.value)) || null);
+  $('gWt').onchange = e => { const v = parseFloat(e.target.value); if (!(v > 0)) return; const d = dayKey(); S.weights = S.weights.filter(w => w.date !== d); S.weights.push({ date: d, value: Math.round(v * 10) / 10 }); save(); toast('Weight logged for today'); render(); };
+  if ($('gCm')) $('gCm').onchange = e => upd('heightCm', +e.target.value || null);
+  if ($('gFt')) $('gFt').onchange = $('gIn').onchange = () => { const cm = ((+$('gFt').value || 0) * 12 + (+$('gIn').value || 0)) * 2.54; upd('heightCm', cm > 0 ? Math.round(cm * 10) / 10 : null); };
+  $('gAct').onchange = e => upd('activity', +e.target.value);
+  $('gRate').onchange = e => upd('goalRate', +e.target.value);
+  if ($('gAuto')) $('gAuto').onchange = e => { st.autoGoal = e.target.checked; save(); if (e.target.checked) toast(`Daily goal set to ${calorieCalc().target.toLocaleString()} kcal`); render(); };
+}
+
 function renderSettings() {
   setTick(null);
   const st = S.settings;
   const notifState = !('Notification' in window) ? 'unsupported' : Notification.permission;
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  view.innerHTML = `
-    <div class="card"><h2>Fasting schedule</h2>
+  const sec = settingsSec;
+  view.innerHTML = (sec ? `<button class="link back-link" id="secBack">‹ Settings</button>` : settingsMenuHTML()) + `
+    <section data-sec="goal">${goalCardHTML()}
+    <div class="card"><h2>Daily & weekly budget</h2>
+      <label style="margin-top:0">Daily calorie goal</label><input type="number" inputmode="numeric" id="sGoal" value="${st.calorieGoal}" ${st.autoGoal && calorieCalc() ? 'disabled' : ''}>
+      ${st.autoGoal && calorieCalc() ? '<p class="small muted">Set by the calculator above. Turn off "Set my daily goal from this" to type your own.</p>' : ''}
+      <label>Weekly calorie budget</label><input type="number" inputmode="numeric" id="sWeek" value="${st.weeklyBudget || ''}" placeholder="${(st.calorieGoal * 7).toLocaleString()} (daily goal × 7)">
+      <p class="small muted">Leave blank to use your daily goal × 7. Set your own if you want room for a bigger weekend.</p>
+      <label>Week starts on</label><select id="sWkStart"><option value="1" ${st.weekStart === 1 ? 'selected' : ''}>Monday</option><option value="0" ${st.weekStart === 0 ? 'selected' : ''}>Sunday</option></select></div></section>
+    <section data-sec="fasting"><div class="card"><h2>Fasting schedule</h2>
       <label>Fasting plan</label>
       <select id="sPlan">${[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map(h => `<option value="${h}" ${h === st.fastHours ? 'selected' : ''}>${h}:${24 - h} (${h}h fast)</option>`).join('')}</select>
       <div class="switch"><span>Same schedule every day</span><input type="checkbox" id="sSame" ${st.sameEveryDay ? 'checked' : ''}></div>
@@ -856,25 +969,22 @@ function renderSettings() {
       <p class="small muted">Eating ${hm12(st.eatStart)}–${hm12(hmFromMin(parseHM(st.eatStart) + (24 - st.fastHours) * 60))}. You'll be reminded at ${hm12(hmFromMin(parseHM(st.eatStart) - st.fastHours * 60))} to start your fast if you haven't.</p>`
       : `<p class="small muted">Set when you eat your first meal each day. Your fast ends then and starts ${st.fastHours}h earlier, which is when you're reminded. Turn a day off to skip fasting (it won't break your streak).</p>
       ${[0, 1, 2, 3, 4, 5, 6].map(i => (i + st.weekStart) % 7).map(d => { const sc = st.schedule[d]; return `<div class="row" style="padding:6px 0;border-bottom:1.5px dashed var(--line-soft)"><input type="checkbox" data-son="${d}" ${sc.on ? 'checked' : ''} style="width:auto;transform:scale(1.2)"><b style="width:40px">${DAY_NAMES[d]}</b><input type="time" data-seat="${d}" value="${sc.eat}" ${sc.on ? '' : 'disabled'} style="width:130px"><span class="small muted grow" style="text-align:right">${sc.on ? `fast starts ${parseHM(sc.eat) - st.fastHours * 60 < 0 ? DAY_NAMES[(d + 6) % 7] + ' ' : ''}${hm12(hmFromMin(parseHM(sc.eat) - st.fastHours * 60))}` : 'no fast'}</span></div>`; }).join('')}`}
+    </div>
+    <div class="card"><h2>Streak</h2>
+      <div class="switch"><span>Weekly streak freeze<br><span class="small muted">One missed day per week won't break your streak</span></span><input type="checkbox" id="sFreeze" ${st.streakFreeze ? 'checked' : ''}></div></div></section>
+    <section data-sec="remind"><div class="card"><h2>Reminders</h2>
       <div class="switch"><span>Fast reminders</span><input type="checkbox" id="sRem" ${st.reminders ? 'checked' : ''}></div>
       <p class="small muted">Notifications: <b>${notifState}</b>${standalone ? '' : ' · On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then enable here.'}</p>
       <div class="btn-grid"><button class="btn" id="sNotif">Enable notifications</button><button class="btn" id="sIcs">📅 Add to calendar</button></div>
       <p class="small muted">Web apps can't schedule alerts while fully closed. The calendar option adds recurring reminders that match your schedule and always fire. Re-download it if you change your schedule.</p>
-    </div>
-    <div class="card"><h2>Streak</h2>
-      <div class="switch"><span>Weekly streak freeze<br><span class="small muted">One missed day per week won't break your streak</span></span><input type="checkbox" id="sFreeze" ${st.streakFreeze ? 'checked' : ''}></div></div>
-    <div class="card"><h2>Calories & meals</h2>
-      <label>Daily calorie goal</label><input type="number" inputmode="numeric" id="sGoal" value="${st.calorieGoal}">
-      <label>Weekly calorie budget</label><input type="number" inputmode="numeric" id="sWeek" value="${st.weeklyBudget || ''}" placeholder="${(st.calorieGoal * 7).toLocaleString()} (daily goal × 7)">
-      <p class="small muted">Leave blank to use your daily goal × 7. Set your own if you want room for a bigger weekend.</p>
-      <label>Week starts on</label><select id="sWkStart"><option value="1" ${st.weekStart === 1 ? 'selected' : ''}>Monday</option><option value="0" ${st.weekStart === 0 ? 'selected' : ''}>Sunday</option></select>
-      <label style="margin-top:12px">Meals to show</label>
+    </div></section>
+    <section data-sec="meals"><div class="card"><h2>Meals to show</h2>
       ${MEALS.map(m => `<div class="switch"><span>${m.label}</span><input type="checkbox" data-meal="${m.id}" ${st.meals[m.id] ? 'checked' : ''}></div>`).join('')}
-      <p class="small muted">After you log your last meal of the day (${mealLabel(lastMainMeal())}), you'll be asked to start your fast.</p></div>
-    <div class="card"><h2>Color palette</h2>
-      <div class="theme-grid">${['auto', ...Object.keys(THEMES)].map(k => { const t = THEMES[k === 'auto' ? seasonNow() : k]; return `<button class="theme-opt ${st.theme === k ? 'active' : ''}" data-theme-opt="${k}"><span class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span>${k === 'auto' ? `Match season<br><span class="small muted">now: ${THEMES[seasonNow()].label}</span>` : t.label}</button>`; }).join('')}</div></div>
-    <div class="card"><h2>Weight</h2><label>Unit</label><select id="sUnit"><option ${st.weightUnit === 'lb' ? 'selected' : ''}>lb</option><option ${st.weightUnit === 'kg' ? 'selected' : ''}>kg</option></select></div>
-    <div class="card"><h2>AI photo logging</h2>
+      <p class="small muted">After you log your last meal of the day (${mealLabel(lastMainMeal())}), you'll be asked to start your fast.</p></div></section>
+    <section data-sec="look"><div class="card"><h2>Color palette</h2>
+      <div class="theme-grid">${['auto', ...Object.keys(THEMES)].map(k => { const t = THEMES[k === 'auto' ? seasonNow() : k]; return `<button class="theme-opt ${st.theme === k ? 'active' : ''}" data-theme-opt="${k}"><span class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span>${k === 'auto' ? `Match season<br><span class="small muted">now: ${THEMES[seasonNow()].label}</span>` : t.label}</button>`; }).join('')}</div></div></section>
+    <section data-sec="units"><div class="card"><h2>Units</h2><label style="margin-top:0">Weight</label><select id="sUnit"><option ${st.weightUnit === 'lb' ? 'selected' : ''}>lb</option><option ${st.weightUnit === 'kg' ? 'selected' : ''}>kg</option></select><p class="small muted">Height uses ft/in with lb, and cm with kg.</p></div></section>
+    <section data-sec="ai"><div class="card"><h2>AI photo logging</h2>
       <label>AI provider</label><select id="sProv"><option value="gemini" ${st.aiProvider !== 'claude' ? 'selected' : ''}>Google Gemini (free tier)</option><option value="claude" ${st.aiProvider === 'claude' ? 'selected' : ''}>Anthropic Claude (paid, ~1–2¢/photo)</option></select>
       ${st.aiProvider === 'claude' ? `
       <label>Anthropic API key</label><input type="password" id="sKey" value="${esc(st.apiKey)}" placeholder="sk-ant-…" autocomplete="off">
@@ -883,11 +993,15 @@ function renderSettings() {
       <label>Gemini API key</label><input type="password" id="sGKey" value="${esc(st.geminiKey)}" placeholder="AIza…" autocomplete="off">
       <p class="small muted">Free key at aistudio.google.com (no card needed). Kept on this device (and in your account if you sign in) and sent only to Google. Free-tier photos may be used by Google to improve its products.</p>
       <label>Model</label><input id="sGModel" value="${esc(st.geminiModel)}" autocomplete="off" autocapitalize="off">
-      <p class="small muted">If this model is retired, the app switches to a current Flash model automatically.</p>`}</div>
-    ${Cloud.cardHTML()}
-    <div class="card"><h2>Data</h2><p class="small muted">${Cloud.signedIn() ? 'Saved on this phone and synced to your account.' : 'Everything is stored on this phone only. Export a backup now and then, or sign in above to sync.'}</p>
+      <p class="small muted">If this model is retired, the app switches to a current Flash model automatically.</p>`}</div></section>
+    <section data-sec="account">${Cloud.cardHTML()}</section>
+    <section data-sec="data"><div class="card"><h2>Data</h2><p class="small muted">${Cloud.signedIn() ? 'Saved on this phone and synced to your account.' : 'Everything is stored on this phone only. Export a backup now and then, or sign in under Account to sync.'}</p>
       <div class="btn-grid"><button class="btn" id="sExp">Export backup</button><button class="btn" id="sImpBtn">Import backup</button><input type="file" accept=".json,application/json,text/plain" id="sImp" class="visually-hidden"></div>
-      <button class="btn danger" id="sWipe" style="margin-top:8px">Erase all data</button><p class="small muted center" style="margin:12px 0 0">App version ${APP_VERSION}</p></div>`;
+      <button class="btn danger" id="sWipe" style="margin-top:8px">Erase all data</button></div></section>`;
+  view.querySelectorAll('section[data-sec]').forEach(el => { if (el.dataset.sec !== sec) el.classList.add('hidden'); });
+  view.querySelectorAll('[data-sec-open]').forEach(b => b.onclick = () => { settingsSec = b.dataset.secOpen; render(); window.scrollTo(0, 0); });
+  if (sec) document.getElementById('secBack').onclick = () => { settingsSec = null; render(); window.scrollTo(0, 0); };
+  bindGoalCard();
   const set = (k, v) => { st[k] = v; save(); };
   const bindEl = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
   document.getElementById('sPlan').onchange = e => { set('fastHours', +e.target.value); const f = activeFast(); if (f) { f.goalH = +e.target.value; save(); } render(); };
@@ -901,7 +1015,7 @@ function renderSettings() {
   document.getElementById('sFreeze').onchange = e => set('streakFreeze', e.target.checked);
   document.getElementById('sGoal').onchange = e => { set('calorieGoal', +e.target.value || 1800); render(); };
   view.querySelectorAll('[data-theme-opt]').forEach(b => b.onclick = () => { set('theme', b.dataset.themeOpt); applyTheme(); render(); });
-  document.getElementById('sUnit').onchange = e => set('weightUnit', e.target.value);
+  document.getElementById('sUnit').onchange = e => { const u = e.target.value; if (u !== st.weightUnit) { const r = u === 'kg' ? st.goalRate / 2 : st.goalRate * 2; st.goalRate = GOAL_RATES[u].reduce((b, x) => Math.abs(x - r) < Math.abs(b - r) ? x : b); const f = u === 'kg' ? 0.45359237 : 1 / 0.45359237; S.weights.forEach(w => { w.value = Math.round(w.value * f * 10) / 10; }); } set('weightUnit', u); render(); };
   document.getElementById('sProv').onchange = e => { set('aiProvider', e.target.value); render(); };
   const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
   bind('sKey', e => set('apiKey', e.target.value.trim()));
