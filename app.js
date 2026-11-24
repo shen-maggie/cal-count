@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '24';
+const APP_VERSION = '25';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -268,7 +268,7 @@ function toast(msg) { const t = document.getElementById('toast'); t.textContent 
 
 const sheet = document.getElementById('sheet'), sheetBody = document.getElementById('sheetBody');
 function openSheet(html) { sheetBody.innerHTML = html; sheet.classList.remove('hidden'); document.body.style.overflow = 'hidden'; }
-function closeSheet() { sheet.classList.add('hidden'); document.body.style.overflow = ''; }
+function closeSheet() { stopScanner(); sheet.classList.add('hidden'); document.body.style.overflow = ''; }
 sheet.querySelector('.sheet-backdrop').onclick = closeSheet;
 
 // Promise-based dialog on its own layer above any open sheet. Resolves true (ok), 'extra', or false (cancel).
@@ -371,8 +371,8 @@ function renderHome() {
       <div class="card">
         <h2>Log food</h2>
         <div class="meal-btns">${enabledMeals().map(m => `<button class="meal-btn" data-meal="${m.id}"><span class="ico">${mealIco[m.id]}</span>${m.label}<small>${sumKcal(foodsOn(dayKey()).filter(x => x.meal === m.id))} kcal</small></button>`).join('')}</div>
-        <div class="btn-grid" style="margin-top:12px"><button class="btn blue" id="snapBtn">📷 Snap a photo</button><button class="btn" id="quickBtn">⚡ Quick add</button></div>
-        <button class="btn" id="mineBtn" style="margin-top:10px">📖 My recipes & foods</button>
+        <div class="btn-grid" style="margin-top:12px"><button class="btn blue" id="snapBtn">📷 Snap a photo</button><button class="btn blue" id="scanBtn">▥ Scan barcode</button>
+          <button class="btn" id="quickBtn">⚡ Quick add</button><button class="btn" id="mineBtn">📖 My foods</button></div>
       </div>
       <button class="btn primary" id="startFast">🌙 Start ${st.fastHours}h fast</button>
       <div class="center" style="margin-top:6px"><button class="link" id="startEarlier">Started earlier?</button> · <button class="link" id="recapBtn">Weekly recap</button></div>`;
@@ -381,6 +381,7 @@ function renderHome() {
     document.getElementById('mineBtn').onclick = () => openLogSheet(guessMeal(), 'library');
     document.getElementById('snapBtn').onclick = () => openLogSheet(guessMeal(), 'photo');
     document.getElementById('quickBtn').onclick = () => openLogSheet(guessMeal(), 'quick');
+    document.getElementById('scanBtn').onclick = () => openLogSheet(guessMeal(), 'scan');
     document.getElementById('startFast').onclick = () => startFast();
     document.getElementById('recapBtn').onclick = () => openRecap(weekId(dayKey()));
     document.getElementById('startEarlier').onclick = () => editTimeSheet('When did your fast start?', Date.now(), t => startFast(Math.min(t, Date.now())));
@@ -406,13 +407,13 @@ function openLogSheet(meal, mode = 'quick', date = dayKey()) {
       <label>Meal</label>
       <select id="mealSel">${enabledMeals().map(m => `<option value="${m.id}" ${m.id === state.meal ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       <div class="seg" style="margin-top:12px">
-        ${[['quick', '⚡ Quick'], ['photo', '📷 AI photo'], ['library', '📖 Recipes']].map(([k, l]) => `<button data-mode="${k}" class="${state.mode === k ? 'active' : ''}">${l}</button>`).join('')}
+        ${[['quick', '⚡ Quick'], ['scan', '▥ Scan'], ['photo', '📷 Photo'], ['library', '📖 Foods']].map(([k, l]) => `<button data-mode="${k}" class="${state.mode === k ? 'active' : ''}">${l}</button>`).join('')}
       </div>
       <div id="modeBody"></div>`);
-    document.getElementById('x').onclick = closeSheet;
+    document.getElementById('x').onclick = () => { stopScanner(); closeSheet(); };
     document.getElementById('mealSel').onchange = e => state.meal = e.target.value;
-    sheetBody.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { state.mode = b.dataset.mode; draw(); });
-    ({ quick: drawQuick, photo: drawPhoto, library: drawLibraryPick })[state.mode](document.getElementById('modeBody'), state);
+    sheetBody.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { stopScanner(); state.mode = b.dataset.mode; draw(); });
+    ({ quick: drawQuick, scan: drawScan, photo: drawPhoto, library: drawLibraryPick })[state.mode](document.getElementById('modeBody'), state);
   };
   draw();
 }
@@ -428,6 +429,142 @@ function drawQuick(el, state) {
   document.getElementById('qAdd').onclick = () => {
     const kcal = +document.getElementById('qk').value; if (!kcal) return toast('Enter calories');
     addFoods([{ name: document.getElementById('qn').value || 'Quick add', kcal, protein: document.getElementById('qp').value, carbs: document.getElementById('qc').value, fat: document.getElementById('qf').value, source: 'quick' }], state.meal, state.date);
+  };
+}
+
+// ---------- Barcode scanning (Open Food Facts, free product database) ----------
+let scanStop = null;
+function stopScanner() { if (scanStop) { try { scanStop(); } catch {} scanStop = null; } }
+let zxingLoad = null;
+function loadZXing() {
+  if (window.ZXing) return Promise.resolve(window.ZXing);
+  return zxingLoad ||= new Promise((ok, fail) => { const sc = document.createElement('script'); sc.src = 'vendor/zxing.min.js'; sc.onload = () => ok(window.ZXing); sc.onerror = () => { zxingLoad = null; fail(new Error('Scanner failed to load')); }; document.head.appendChild(sc); });
+}
+async function zxReader() {
+  const Z = await loadZXing(), hints = new Map();
+  hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.CODE_128]);
+  hints.set(Z.DecodeHintType.TRY_HARDER, true);
+  return new Z.BrowserMultiFormatReader(hints, 300);
+}
+function drawScan(el, state) {
+  el.innerHTML = `
+    <div class="scan-box" id="scanBox"><video id="scanVid" playsinline muted></video><div class="scan-line"></div></div>
+    <p class="small muted center" id="scanMsg">Starting camera…</p>
+    <div class="btn-grid" id="scanOpts"><button class="btn" id="scanPhotoBtn">🖼 Scan from photo</button><button class="btn" id="scanTypeBtn">⌨️ Type the number</button></div>
+    <input type="file" accept="image/*" id="scanPhoto" class="visually-hidden">
+    <div id="scanType" class="hidden"><label>Barcode number</label><div class="row"><input id="scanCode" inputmode="numeric" placeholder="e.g. 012345678905" class="grow"><button class="btn small primary" id="scanGo">Look up</button></div></div>
+    <div id="scanResult"></div>`;
+  const msg = t => { const m = document.getElementById('scanMsg'); if (m) m.textContent = t; };
+  let done = false;
+  const found = code => { if (done) return; done = true; stopScanner(); ['scanBox', 'scanOpts', 'scanType'].forEach(id => document.getElementById(id)?.classList.add('hidden')); navigator.vibrate?.(60); lookupBarcode(code, state); };
+  document.getElementById('scanTypeBtn').onclick = () => { document.getElementById('scanType').classList.remove('hidden'); document.getElementById('scanCode').focus(); };
+  document.getElementById('scanGo').onclick = () => { const c = document.getElementById('scanCode').value.replace(/\D/g, ''); if (c.length < 6) return toast('Enter the digits under the barcode'); done = false; found(c); };
+  document.getElementById('scanPhotoBtn').onclick = () => document.getElementById('scanPhoto').click();
+  document.getElementById('scanPhoto').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return; msg('Reading barcode…');
+    const url = URL.createObjectURL(f);
+    try { const r = await (await zxReader()).decodeFromImageUrl(url); done = false; found(r.getText()); }
+    catch { msg('No barcode found in that photo. Get closer, keep it flat and well lit, or type the number.'); }
+    finally { URL.revokeObjectURL(url); }
+  };
+  // Live camera scan
+  (async () => {
+    if (!navigator.mediaDevices?.getUserMedia) return msg('Camera not available here. Scan from a photo or type the number.');
+    try {
+      const vid = document.getElementById('scanVid');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      if (!document.getElementById('scanVid')) { stream.getTracks().forEach(t => t.stop()); return; }
+      let stopped = false;
+      scanStop = () => { stopped = true; stream.getTracks().forEach(t => t.stop()); };
+      vid.srcObject = stream; await vid.play();
+      msg('Point the camera at the barcode');
+      if ('BarcodeDetector' in window) {
+        const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
+        const loop = async () => { if (stopped || done) return; try { const r = await det.detect(vid); if (r[0]) return found(r[0].rawValue); } catch {} setTimeout(loop, 200); };
+        loop();
+      } else {
+        const reader = await zxReader();
+        if (stopped) return;
+        const cv = document.createElement('canvas'), ctx = cv.getContext('2d', { willReadFrequently: true });
+        const loop = () => {
+          if (stopped || done) return;
+          if (vid.videoWidth) {
+            // decode the middle band of the frame, where the guide line is
+            const w = vid.videoWidth, h = Math.round(vid.videoHeight * 0.5);
+            cv.width = w; cv.height = h; ctx.drawImage(vid, 0, (vid.videoHeight - h) / 2, w, h, 0, 0, w, h);
+            try { const r = reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(cv)))); if (r) return found(r.getText()); } catch {}
+          }
+          setTimeout(loop, 150);
+        };
+        loop();
+      }
+    } catch (e) {
+      msg(e && e.name === 'NotAllowedError' ? 'Camera access was blocked. Allow it in iPhone Settings, or scan from a photo instead.' : 'Couldn\'t start the camera. Scan from a photo or type the number.');
+    }
+  })();
+}
+async function lookupBarcode(code, state) {
+  const out = document.getElementById('scanResult'); if (!out) return;
+  out.innerHTML = `<div class="spinner"></div><p class="small muted center">Looking up ${esc(code)}…</p>`;
+  const msg = document.getElementById('scanMsg'); if (msg) msg.textContent = '';
+  const saved = S.ingredients.find(i => i.barcode === code);
+  let prod = null;
+  try {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 15000);
+    const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=product_name,product_name_en,brands,nutriments,serving_size,serving_quantity,image_front_small_url`, { signal: ctl.signal });
+    clearTimeout(t);
+    const j = await r.json();
+    if (j.status === 1 && j.product) prod = j.product;
+  } catch { if (!saved) { out.innerHTML = `<div class="warnbox">Couldn't reach the food database. Check your connection and try again.</div><button class="btn" id="scanAgain">Scan again</button>`; document.getElementById('scanAgain').onclick = () => drawScan(document.getElementById('modeBody'), state); return; } }
+  const n = (prod && prod.nutriments) || {};
+  const kcal100 = n['energy-kcal_100g'] ?? (n['energy_100g'] != null ? n['energy_100g'] / 4.184 : null);
+  if (!prod || kcal100 == null) {
+    if (saved) return showScanned({ name: saved.name, kcal100: saved.kcalPerUnit, p: saved.p, c: saved.c, f: saved.f, srvG: saved.srvG, srvLabel: saved.srvLabel, code }, state);
+    out.innerHTML = `<div class="warnbox">${prod ? 'This product has no calorie info yet.' : 'Product not found.'} You can log it with Quick add from the nutrition label.</div>
+      <div class="btn-grid"><button class="btn" id="scanAgain">Scan again</button><button class="btn primary" id="scanQuick">Quick add</button></div>
+      <p class="small muted center">Barcode ${esc(code)}. Products come from Open Food Facts, a free community database.</p>`;
+    document.getElementById('scanAgain').onclick = () => drawScan(document.getElementById('modeBody'), state);
+    document.getElementById('scanQuick').onclick = () => { state.mode = 'quick'; sheetBody.querySelector('[data-mode="quick"]').click(); };
+    return;
+  }
+  const brand = (prod.brands || '').split(',')[0].trim(), pname = (prod.product_name_en || prod.product_name || 'Scanned item').trim();
+  const name = brand && !pname.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${pname}` : pname;
+  const srvG = +prod.serving_quantity || null;
+  showScanned({ name, kcal100, p: n.proteins_100g, c: n.carbohydrates_100g, f: n.fat_100g, srvG, srvLabel: prod.serving_size || (srvG ? `${srvG} g` : ''), img: prod.image_front_small_url, code }, state);
+}
+function showScanned(it, state) {
+  const out = document.getElementById('scanResult');
+  const per = g => ({ kcal: it.kcal100 * g / 100, protein: it.p != null ? it.p * g / 100 : '', carbs: it.c != null ? it.c * g / 100 : '', fat: it.f != null ? it.f * g / 100 : '' });
+  let unit = it.srvG ? 'srv' : 'g';
+  out.innerHTML = `
+    <div class="card stat" style="margin:4px 0 0">
+      <div class="row">${it.img ? `<img src="${esc(it.img)}" alt="" style="width:56px;height:56px;object-fit:contain;border-radius:10px;background:#fff;border:1.5px solid var(--line-soft)">` : ''}
+        <div class="grow"><b>${esc(it.name)}</b><br><span class="small muted">${Math.round(it.kcal100)} kcal / 100 g${it.srvG ? ` · 1 serving${it.srvLabel ? ` (${esc(it.srvLabel)})` : ''} = ${Math.round(it.kcal100 * it.srvG / 100)} kcal` : ''}</span></div></div>
+      <div class="row" style="margin-top:10px"><input type="number" inputmode="decimal" id="scAmt" value="${it.srvG ? 1 : 100}" step="any" class="grow">
+        ${it.srvG ? `<div class="seg" style="margin:0;flex:0 0 auto"><button data-su="srv" class="active">servings</button><button data-su="g">grams</button></div>` : '<span class="muted">grams</span>'}</div>
+      <p class="center" style="margin:10px 0 4px"><span class="big-num" id="scK" style="font-size:30px"></span> <span class="muted">kcal</span></p>
+      <p class="small muted center" id="scM" style="margin:0"></p>
+    </div>
+    <div class="btn-grid" style="margin-top:12px"><button class="btn" id="scanAgain">Scan another</button><button class="btn primary" id="scAdd">Add</button></div>
+    <p class="small muted center">Saved to your foods so you can find it by name next time. Data from Open Food Facts.</p>`;
+  const grams = () => { const a = +document.getElementById('scAmt').value || 0; return unit === 'srv' ? a * it.srvG : a; };
+  const upd = () => { const v = per(grams()); document.getElementById('scK').textContent = Math.round(v.kcal); document.getElementById('scM').textContent = v.protein !== '' ? `P ${Math.round(v.protein)} g · C ${Math.round(v.carbs)} g · F ${Math.round(v.fat)} g` : ''; };
+  document.getElementById('scAmt').oninput = upd;
+  out.querySelectorAll('[data-su]').forEach(b => b.onclick = () => {
+    if (b.dataset.su === unit) return;
+    const amt = document.getElementById('scAmt'), g = grams(); unit = b.dataset.su;
+    amt.value = unit === 'srv' ? Math.round(g / it.srvG * 100) / 100 : Math.round(g);
+    out.querySelectorAll('[data-su]').forEach(x => x.classList.toggle('active', x === b)); upd();
+  });
+  upd();
+  // Keep it as a saved food (per 100 g) so it shows up in search and recipes
+  let ing = S.ingredients.find(i => i.barcode === it.code);
+  if (!ing) { ing = { id: uid(), name: it.name, unit: 'g', unitSize: 100, kcalPerUnit: Math.round(it.kcal100), barcode: it.code, p: it.p, c: it.c, f: it.f, srvG: it.srvG, srvLabel: it.srvLabel }; S.ingredients.push(ing); save(); }
+  document.getElementById('scanAgain').onclick = () => drawScan(document.getElementById('modeBody'), state);
+  document.getElementById('scAdd').onclick = () => {
+    const g = grams(); if (!g) return toast('Enter an amount');
+    const amt = +document.getElementById('scAmt').value;
+    addFoods([{ name: `${it.name} (${unit === 'srv' ? `${amt} srv` : `${Math.round(g)} g`})`, ...per(g), source: 'barcode' }], state.meal, state.date);
   };
 }
 
@@ -888,7 +1025,7 @@ const SETTINGS_SECS = {
   meals:    { label: 'Meals', icon: '🍽️', sub: 'Which meals to show' },
   remind:   { label: 'Reminders', icon: '🔔', sub: 'Notifications and calendar' },
   look:     { label: 'Appearance', icon: '🎨', sub: 'Color palette' },
-  units:    { label: 'Units', icon: '⚖️', sub: 'lb or kg' },
+  units:    { label: 'Units', icon: '⚖️', sub: 'Imperial or metric' },
   ai:       { label: 'AI photo logging', icon: '📷', sub: 'Gemini or Claude' },
   data:     { label: 'Backup & data', icon: '🗄️', sub: 'Export, import, erase' },
 };
@@ -899,7 +1036,7 @@ function settingsMenuHTML() {
     goal: `${st.calorieGoal.toLocaleString()} kcal a day${st.autoGoal && c ? ' · auto' : ''}`,
     fasting: `${st.fastHours}:${24 - st.fastHours}${st.sameEveryDay ? ` · first meal ${hm12(st.eatStart)}` : ' · custom by day'}`,
     look: st.theme === 'auto' ? `Match season (${th.label})` : th.label,
-    units: st.weightUnit,
+    units: st.weightUnit === 'kg' ? 'Metric (kg, cm)' : 'Imperial (lb, ft/in)',
     ai: st.aiProvider === 'claude' ? 'Anthropic Claude' : 'Google Gemini',
   };
   const row = k => `<button class="menu-row" data-sec-open="${k}"><span class="menu-ico">${SETTINGS_SECS[k].icon}</span><span class="grow"><span class="menu-label">${SETTINGS_SECS[k].label}</span><span class="menu-sub">${esc(subs[k] || SETTINGS_SECS[k].sub)}</span></span><svg class="menu-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>`;
@@ -983,7 +1120,7 @@ function renderSettings() {
       <p class="small muted">After you log your last meal of the day (${mealLabel(lastMainMeal())}), you'll be asked to start your fast.</p></div></section>
     <section data-sec="look"><div class="card"><h2>Color palette</h2>
       <div class="theme-grid">${['auto', ...Object.keys(THEMES)].map(k => { const t = THEMES[k === 'auto' ? seasonNow() : k]; return `<button class="theme-opt ${st.theme === k ? 'active' : ''}" data-theme-opt="${k}"><span class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span>${k === 'auto' ? `Match season<br><span class="small muted">now: ${THEMES[seasonNow()].label}</span>` : t.label}</button>`; }).join('')}</div></div></section>
-    <section data-sec="units"><div class="card"><h2>Units</h2><label style="margin-top:0">Weight</label><select id="sUnit"><option ${st.weightUnit === 'lb' ? 'selected' : ''}>lb</option><option ${st.weightUnit === 'kg' ? 'selected' : ''}>kg</option></select><p class="small muted">Height uses ft/in with lb, and cm with kg.</p></div></section>
+    <section data-sec="units"><div class="card"><h2>Units</h2><div class="seg" style="margin:0">${[['lb', 'Imperial'], ['kg', 'Metric']].map(([v, l]) => `<button data-unit="${v}" class="${st.weightUnit === v ? 'active' : ''}">${l}</button>`).join('')}</div><p class="small muted" style="margin-bottom:0">${st.weightUnit === 'kg' ? 'Weight in kg, height in cm.' : 'Weight in lb, height in ft and in.'} Switching converts your logged weights.</p></div></section>
     <section data-sec="ai"><div class="card"><h2>AI photo logging</h2>
       <label>AI provider</label><select id="sProv"><option value="gemini" ${st.aiProvider !== 'claude' ? 'selected' : ''}>Google Gemini (free tier)</option><option value="claude" ${st.aiProvider === 'claude' ? 'selected' : ''}>Anthropic Claude (paid, ~1–2¢/photo)</option></select>
       ${st.aiProvider === 'claude' ? `
@@ -1015,7 +1152,7 @@ function renderSettings() {
   document.getElementById('sFreeze').onchange = e => set('streakFreeze', e.target.checked);
   document.getElementById('sGoal').onchange = e => { set('calorieGoal', +e.target.value || 1800); render(); };
   view.querySelectorAll('[data-theme-opt]').forEach(b => b.onclick = () => { set('theme', b.dataset.themeOpt); applyTheme(); render(); });
-  document.getElementById('sUnit').onchange = e => { const u = e.target.value; if (u !== st.weightUnit) { const r = u === 'kg' ? st.goalRate / 2 : st.goalRate * 2; st.goalRate = GOAL_RATES[u].reduce((b, x) => Math.abs(x - r) < Math.abs(b - r) ? x : b); const f = u === 'kg' ? 0.45359237 : 1 / 0.45359237; S.weights.forEach(w => { w.value = Math.round(w.value * f * 10) / 10; }); } set('weightUnit', u); render(); };
+  view.querySelectorAll('[data-unit]').forEach(b => b.onclick = () => { const u = b.dataset.unit; if (u !== st.weightUnit) { const r = u === 'kg' ? st.goalRate / 2 : st.goalRate * 2; st.goalRate = GOAL_RATES[u].reduce((b, x) => Math.abs(x - r) < Math.abs(b - r) ? x : b); const f = u === 'kg' ? 0.45359237 : 1 / 0.45359237; S.weights.forEach(w => { w.value = Math.round(w.value * f * 10) / 10; }); } set('weightUnit', u); render(); });
   document.getElementById('sProv').onchange = e => { set('aiProvider', e.target.value); render(); };
   const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
   bind('sKey', e => set('apiKey', e.target.value.trim()));

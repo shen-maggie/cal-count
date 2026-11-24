@@ -201,3 +201,9 @@ input::-webkit-date-and-time-value { text-align: left; }
 .unit-in { position: relative; }
 .unit-in input { padding-right: 40px; }
 .unit-in span { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 600; pointer-events: none; }
+
+/* Barcode scanner */
+.scan-box { position: relative; border: 2px solid var(--ink); border-radius: 16px; overflow: hidden; background: #2a201b; aspect-ratio: 4 / 3; margin-bottom: 6px; }
+.scan-box video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scan-line { position: absolute; left: 10%; right: 10%; top: 50%; height: 2px; background: var(--berry); box-shadow: 0 0 8px var(--berry); }
+.scan-box::after { content: ""; position: absolute; inset: 25% 8%; border: 2px dashed rgba(255,255,255,.7); border-radius: 12px; }
