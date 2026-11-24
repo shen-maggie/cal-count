@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '25';
+const APP_VERSION = '26';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -859,6 +859,7 @@ function renderWeight() {
     <div class="card">
       <div class="row"><input type="number" inputmode="decimal" step="0.1" id="wVal" placeholder="Weight (${unit})" class="grow"><input type="date" id="wDate" value="${dayKey()}" style="width:150px"></div>
       <button class="btn primary" id="wAdd" style="margin-top:10px">Log weight</button>
+      <div class="center"><button class="link" id="wImport" style="margin-top:6px">Import past weights</button></div>
     </div>
     ${ws.length ? `<div class="card">
       <div class="row between"><div><div class="big-num">${latest.value}</div><div class="small muted">${unit} · ${fmtDay(latest.date)}</div></div>
@@ -873,11 +874,77 @@ function renderWeight() {
     if (!v || !d) return toast('Enter a weight');
     S.weights = S.weights.filter(w => w.date !== d); S.weights.push({ date: d, value: v }); save(); toast('Weight logged'); render();
   };
+  document.getElementById('wImport').onclick = openWeightImport;
   view.querySelectorAll('[data-delw]').forEach(b => b.onclick = () => { S.weights = S.weights.filter(w => w.date !== b.dataset.delw); save(); render(); });
   view.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { weightRange = b.dataset.r; render(); });
   if (ws.length) drawChart(document.getElementById('chart'), ws);
 }
 let weightRange = '90';
+// ---------- Import past weights from pasted text ----------
+// Reads one weigh-in per line, e.g. "may 16 - 123.0", "Sept 5: 119", "2025-03-01 130.2", "3/1/25 130.2", "12 Jan 2025 64.5".
+// Anything after the weight (notes) is ignored. Lines without a year count backwards from today.
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+function parseWeightLines(text) {
+  const rows = [], skipped = [];
+  const mon = m => MONTHS.indexOf(m.slice(0, 3)) + 1;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim().toLowerCase().replace(/^[-•*\s]+/, '');
+    if (!line) continue;
+    let m, y = null, mo, d, rest;
+    if ((m = line.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(.*)$/))) [, y, mo, d, rest] = m;
+    else if ((m = line.match(/^(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?(?!\d)(.*)$/))) [, mo, d, y, rest] = m;
+    else if ((m = line.match(/^([a-z]{3,9})\.?\s*(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?(?!\d)(.*)$/)) && mon(m[1]) > 0) { [, mo, d, y, rest] = m; mo = mon(mo); }
+    else if ((m = line.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})\.?(?:,?\s+(\d{4}))?(.*)$/)) && mon(m[2]) > 0) { [, d, mo, y, rest] = m; mo = mon(mo); }
+    else { skipped.push(raw.trim()); continue; }
+    const w = (rest || '').match(/(\d{2,3}(?:[.,]\d+)?)/);
+    mo = +mo; d = +d; y = y ? +y : null; if (y && y < 100) y += 2000;
+    const val = w ? parseFloat(w[1].replace(',', '.')) : NaN;
+    if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31) || !(val >= 20 && val <= 1000)) { skipped.push(raw.trim()); continue; }
+    rows.push({ y, mo, d, value: Math.round(val * 10) / 10 });
+  }
+  // Fill in missing years: the last line is the most recent date on or before today; earlier lines step back a year when the date goes "up".
+  const today = dayKey(), cy = +today.slice(0, 4);
+  const key = (y, mo, d) => `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  let nextKey = null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (!r.y) {
+      let y = nextKey ? +nextKey.slice(0, 4) : cy;
+      if (key(y, r.mo, r.d) > (nextKey || today)) y--;
+      r.y = y;
+    }
+    r.date = key(r.y, r.mo, r.d); nextKey = r.date;
+  }
+  return { rows: rows.filter(r => !isNaN(new Date(r.date).getTime())), skipped };
+}
+function openWeightImport() {
+  const unit = S.settings.weightUnit;
+  openSheet(`<div class="row between"><h2>Import past weights</h2><button class="icon" id="x">✕</button></div>
+    <p class="small muted" style="margin-top:0">Paste your list, one weigh-in per line, like <b>may 16 - 123.0</b> or <b>2025-05-16 123</b>. Notes after the number are ignored. Weights are read as ${unit}.</p>
+    <textarea id="wiText" rows="8" placeholder="may 9 - 124.2&#10;may 16 - 123.0&#10;june 12 - 120.4"></textarea>
+    <div id="wiPrev" class="small" style="margin-top:8px"></div>
+    <button class="btn primary" id="wiGo" style="margin-top:12px" disabled>Import</button>`);
+  document.getElementById('x').onclick = closeSheet;
+  let parsed = { rows: [], skipped: [] };
+  const prev = () => {
+    parsed = parseWeightLines(document.getElementById('wiText').value);
+    const { rows, skipped } = parsed, el = document.getElementById('wiPrev');
+    const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date));
+    const clash = rows.filter(r => S.weights.some(w => w.date === r.date)).length;
+    el.innerHTML = rows.length ? `<b>${rows.length} weigh-in${rows.length > 1 ? 's' : ''}</b> from ${fmtDay(sorted[0].date)} ${sorted[0].y} to ${fmtDay(sorted[sorted.length - 1].date)} ${sorted[sorted.length - 1].y}${clash ? `. ${clash} replace${clash > 1 ? '' : 's'} a weight already logged that day` : ''}.
+      <ul class="list" style="max-height:180px;overflow:auto">${sorted.map(r => `<li><span class="name">${fmtDay(r.date)} ${r.y}</span><span class="kcal">${r.value} ${unit}</span></li>`).join('')}</ul>`
+      + (skipped.length ? `<p class="muted">Skipped ${skipped.length} line${skipped.length > 1 ? 's' : ''} I couldn't read: ${skipped.slice(0, 3).map(esc).join(' · ')}${skipped.length > 3 ? ' …' : ''}</p>` : '')
+      : (document.getElementById('wiText').value.trim() ? '<span class="muted">No weigh-ins found yet. Each line needs a date and a weight.</span>' : '');
+    const go = document.getElementById('wiGo'); go.disabled = !rows.length; go.textContent = rows.length ? `Import ${rows.length} weigh-in${rows.length > 1 ? 's' : ''}` : 'Import';
+  };
+  document.getElementById('wiText').oninput = prev;
+  document.getElementById('wiGo').onclick = () => {
+    const dates = new Set(parsed.rows.map(r => r.date));
+    S.weights = S.weights.filter(w => !dates.has(w.date)).concat(parsed.rows.map(r => ({ date: r.date, value: r.value })));
+    save(); closeSheet(); weightRange = 'all'; toast(`Imported ${parsed.rows.length} weigh-ins`); render();
+  };
+}
+
 const delta = d => `${d > 0 ? '+' : ''}${d.toFixed(1)}`;
 
 function drawChart(el, ws) {
