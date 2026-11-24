@@ -1,5 +1,5 @@
 // Offline-first cache for the app shell. Bump VERSION when you change files so phones pick up updates.
-const VERSION = 'fastcal-v15';
+const VERSION = 'fastcal-v16';
 const SHELL = ['./', 'index.html', 'styles.css', 'foods.js', 'app.js', 'manifest.json', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

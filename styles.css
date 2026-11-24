@@ -68,7 +68,7 @@ button.btn.blue { background: var(--accent2); color: var(--accent2-ink); }
 button.btn.berry { background: var(--berry); color: #fff; }
 button.btn.danger { background: var(--danger); color: white; }
 button.btn.small { padding: 7px 12px; font-size: 15px; width: auto; }
-button.link { background: none; border: 0; color: var(--ink); font-size: 14px; padding: 6px; text-decoration: underline; text-decoration-style: wavy; text-decoration-color: var(--berry); text-underline-offset: 4px; }
+button.link { background: none; border: 0; color: var(--ink); font-size: 14px; font-weight: 700; padding: 6px; text-decoration: underline; text-decoration-thickness: 1.5px; text-decoration-color: currentColor; text-underline-offset: 4px; }
 button.icon { background: none; border: 0; color: var(--muted); font-size: 18px; padding: 4px 8px; }
 .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
@@ -140,8 +140,12 @@ label { display: block; font-size: 13.5px; color: var(--muted); margin: 12px 0 5
 .visually-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
 
 /* Things that sit directly on the cocoa background */
-main > .center:not(.card), main > .center:not(.card) button.link { color: var(--on-bg); text-decoration-color: var(--berry-soft); }
+main > .center:not(.card), main > .center:not(.card) button.link { color: var(--on-bg); }
 main > p.muted:not(.card), main > .muted:not(.card) { color: #e6d4bd; }
 .toast { background: var(--card); color: var(--text); border: 2px solid var(--ink); box-shadow: var(--shadow); }
 input, select, textarea { background: #fbf4e8; }
 .ai-item, .stat { background: #f8eedd !important; }
+
+/* iPhone gives date/time inputs a native minimum width; let them fit their container */
+input[type="time"], input[type="date"], input[type="datetime-local"] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; min-height: 46px; text-align: left; }
+input::-webkit-date-and-time-value { text-align: left; }

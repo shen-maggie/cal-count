@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '15';
+const APP_VERSION = '16';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -856,9 +856,9 @@ function renderSettings() {
       <p class="small muted">Free key at aistudio.google.com (no card needed). Stored only on this device and sent only to Google. Free-tier photos may be used by Google to improve its products.</p>
       <label>Model</label><input id="sGModel" value="${esc(st.geminiModel)}" autocomplete="off" autocapitalize="off">
       <p class="small muted">If this model is retired, the app switches to a current Flash model automatically.</p>`}</div>
-    <div class="card"><h2>Data</h2><p class="small muted">Everything is stored on this phone only. Export a backup now and then. · App version ${APP_VERSION}</p>
+    <div class="card"><h2>Data</h2><p class="small muted">Everything is stored on this phone only. Export a backup now and then.</p>
       <div class="btn-grid"><button class="btn" id="sExp">Export backup</button><button class="btn" id="sImpBtn">Import backup</button><input type="file" accept=".json,application/json,text/plain" id="sImp" class="visually-hidden"></div>
-      <button class="btn danger" id="sWipe" style="margin-top:8px">Erase all data</button></div>`;
+      <button class="btn danger" id="sWipe" style="margin-top:8px">Erase all data</button><p class="small muted center" style="margin:12px 0 0">App version ${APP_VERSION}</p></div>`;
   const set = (k, v) => { st[k] = v; save(); };
   const bindEl = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
   document.getElementById('sPlan').onchange = e => { set('fastHours', +e.target.value); const f = activeFast(); if (f) { f.goalH = +e.target.value; save(); } render(); };
