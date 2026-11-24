@@ -1,9 +1,9 @@
-/* FastCal: calorie tracking + intermittent fasting PWA. All data lives in localStorage on the device. */
+/* FastCal: calorie tracking + intermittent fasting PWA. Data lives in localStorage on the device, with optional cloud sync (sync.js). */
 'use strict';
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '17';
+const APP_VERSION = '18';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -50,7 +50,7 @@ function load() {
   } catch { return structuredClone(DEFAULT_STATE); }
 }
 let S = load();
-function save() { localStorage.setItem(STORE_KEY, JSON.stringify(S)); }
+function save() { S.meta.updatedAt = Date.now(); localStorage.setItem(STORE_KEY, JSON.stringify(S)); if (typeof Cloud !== 'undefined') Cloud.changed(); }
 
 // ---------- Color themes ----------
 const THEMES = {
@@ -285,11 +285,20 @@ function closeSheetSilently() { closeSheet(); }
 // Ring with an inked outline on both edges, like a hand-drawn gauge
 function ringSVG(pct, color, id = 'ringArc') {
   const r = 115, c = 2 * Math.PI * r, p = Math.min(1, Math.max(0, pct));
-  return `<svg viewBox="0 0 260 260">
-    <circle cx="130" cy="130" r="${r}" style="stroke:var(--track)" stroke-width="22" fill="none"/>
+  const base = `<circle cx="130" cy="130" r="${r}" style="stroke:var(--track)" stroke-width="22" fill="none"/>
     <circle cx="130" cy="130" r="${r + 12}" style="stroke:var(--ink)" stroke-width="2.5" fill="none"/>
-    <circle cx="130" cy="130" r="${r - 12}" style="stroke:var(--ink)" stroke-width="2.5" fill="none"/>
-    <circle id="${id}" cx="130" cy="130" r="${r}" style="stroke:${color}" stroke-width="19" fill="none" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p)}"/></svg>`;
+    <circle cx="130" cy="130" r="${r - 12}" style="stroke:var(--ink)" stroke-width="2.5" fill="none"/>`;
+  const arc = (stroke) => `<circle id="${id}" cx="130" cy="130" r="${r}" style="stroke:${stroke}" stroke-width="19" fill="none" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p)}"/>`;
+  if (!Array.isArray(color)) return `<svg viewBox="0 0 260 260">${base}${arc(color)}</svg>`;
+  // Gradient that follows the ring: small colored slices, revealed by the progress arc used as a mask
+  const [c1, c2] = color, N = 90, pt = a => `${(130 + r * Math.cos(a)).toFixed(2)} ${(130 + r * Math.sin(a)).toFixed(2)}`;
+  let segs = '';
+  for (let i = 0; i < N; i++) {
+    const a0 = (i / N) * 2 * Math.PI, a1 = Math.min(i + 1.6, N) / N * 2 * Math.PI, mix = Math.round((i / (N - 1)) * 100);
+    segs += `<path d="M${pt(a0)} A${r} ${r} 0 0 1 ${pt(a1)}" style="stroke:color-mix(in oklab, ${c2} ${mix}%, ${c1})" stroke-width="20" fill="none"/>`;
+  }
+  segs += `<path d="M${pt(-0.2)} A${r} ${r} 0 0 1 ${pt(0.01)}" style="stroke:${c1}" stroke-width="20" fill="none"/>`; // under the rounded start cap
+  return `<svg viewBox="0 0 260 260">${base}<mask id="${id}Mask" maskUnits="userSpaceOnUse" x="0" y="0" width="260" height="260">${arc('#fff')}</mask><g mask="url(#${id}Mask)">${segs}</g></svg>`;
 }
 function streakHTML() {
   const { streak, frozen, todayDone } = computeStreak();
@@ -304,7 +313,7 @@ function renderHome() {
     view.innerHTML = `
       <div class="card center">
         ${streakHTML()}
-        <div class="ring-wrap">${ringSVG((Date.now() - f.start) / goalMs, 'var(--accent)')}
+        <div class="ring-wrap">${ringSVG((Date.now() - f.start) / goalMs, ['var(--ring1)', 'var(--ring2)'])}
           <div class="ring-center"><div class="ring-label">Fasting</div><div class="ring-time" id="tElapsed"></div><div class="ring-label" id="tRemain"></div></div></div>
         <div class="row between small muted"><span>Started ${fmtTime(f.start)} ${dayLabelFor(f.start)}</span><span>Goal ${fmtTime(f.start + goalMs)} ${dayLabelFor(f.start + goalMs)}</span></div>
         <div style="margin-top:14px" class="btn-grid">
@@ -868,13 +877,14 @@ function renderSettings() {
       <label>AI provider</label><select id="sProv"><option value="gemini" ${st.aiProvider !== 'claude' ? 'selected' : ''}>Google Gemini (free tier)</option><option value="claude" ${st.aiProvider === 'claude' ? 'selected' : ''}>Anthropic Claude (paid, ~1–2¢/photo)</option></select>
       ${st.aiProvider === 'claude' ? `
       <label>Anthropic API key</label><input type="password" id="sKey" value="${esc(st.apiKey)}" placeholder="sk-ant-…" autocomplete="off">
-      <p class="small muted">Get one at console.anthropic.com. Stored only on this device and sent only to Anthropic.</p>
+      <p class="small muted">Get one at console.anthropic.com. Kept on this device (and in your account if you sign in) and sent only to Anthropic.</p>
       <label>Model</label><select id="sModel">${[['claude-opus-5-5', 'Claude Opus 5.5 (most accurate)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (cheaper)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)']].map(([v, l]) => `<option value="${v}" ${st.aiModel === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : `
       <label>Gemini API key</label><input type="password" id="sGKey" value="${esc(st.geminiKey)}" placeholder="AIza…" autocomplete="off">
-      <p class="small muted">Free key at aistudio.google.com (no card needed). Stored only on this device and sent only to Google. Free-tier photos may be used by Google to improve its products.</p>
+      <p class="small muted">Free key at aistudio.google.com (no card needed). Kept on this device (and in your account if you sign in) and sent only to Google. Free-tier photos may be used by Google to improve its products.</p>
       <label>Model</label><input id="sGModel" value="${esc(st.geminiModel)}" autocomplete="off" autocapitalize="off">
       <p class="small muted">If this model is retired, the app switches to a current Flash model automatically.</p>`}</div>
-    <div class="card"><h2>Data</h2><p class="small muted">Everything is stored on this phone only. Export a backup now and then.</p>
+    ${Cloud.cardHTML()}
+    <div class="card"><h2>Data</h2><p class="small muted">${Cloud.signedIn() ? 'Saved on this phone and synced to your account.' : 'Everything is stored on this phone only. Export a backup now and then, or sign in above to sync.'}</p>
       <div class="btn-grid"><button class="btn" id="sExp">Export backup</button><button class="btn" id="sImpBtn">Import backup</button><input type="file" accept=".json,application/json,text/plain" id="sImp" class="visually-hidden"></div>
       <button class="btn danger" id="sWipe" style="margin-top:8px">Erase all data</button><p class="small muted center" style="margin:12px 0 0">App version ${APP_VERSION}</p></div>`;
   const set = (k, v) => { st[k] = v; save(); };
@@ -906,14 +916,20 @@ function renderSettings() {
     if (!('Notification' in window)) return toast(standalone ? 'Notifications not supported on this device' : 'Add to Home Screen first, then try again');
     const p = await Notification.requestPermission(); toast(p === 'granted' ? 'Notifications on' : 'Notifications ' + p); if (p === 'granted') notify('FastCal', 'Reminders are on. You\'ll get a nudge when it\'s time to start your fast.'); render();
   };
+  Cloud.bindCard();
   document.getElementById('sIcs').onclick = downloadICS;
   document.getElementById('sExp').onclick = () => exportBackup();
   document.getElementById('sImpBtn').onclick = () => document.getElementById('sImp').click();
   document.getElementById('sImp').onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
-    try { const d = JSON.parse(await f.text()); if (!d.settings) throw 0; localStorage.setItem(STORE_KEY, JSON.stringify(d)); S = load(); applyTheme(); toast('Backup restored'); render(); } catch { toast('That file isn\'t a FastCal backup'); }
+    try { const d = JSON.parse(await f.text()); if (!d.settings) throw 0; localStorage.setItem(STORE_KEY, JSON.stringify(d)); S = load(); save(); applyTheme(); toast('Backup restored'); render(); } catch { toast('That file isn\'t a FastCal backup'); }
   };
-  document.getElementById('sWipe').onclick = async () => { if ((await confirmDialog({ title: 'Erase everything?', body: 'This deletes all fasts, food, weights and recipes from this device.', ok: 'Erase', danger: true })) === true) { localStorage.removeItem(STORE_KEY); S = load(); render(); } };
+  document.getElementById('sWipe').onclick = async () => {
+    const body = 'This deletes all fasts, food, weights and recipes from this device.' + (Cloud.signedIn() ? ' The copy in your account is kept, and this phone is signed out.' : '');
+    if ((await confirmDialog({ title: 'Erase everything?', body, ok: 'Erase', danger: true })) !== true) return;
+    if (Cloud.signedIn()) await Cloud.signOut();
+    localStorage.removeItem(STORE_KEY); S = load(); applyTheme(); render();
+  };
 }
 
 // On iPhone, share the file so it can be saved to Files (plain downloads are unreliable in Home Screen apps).
@@ -973,7 +989,7 @@ async function checkReminder() {
   else if (go === 'extra') startFast(plan.start);
 }
 setInterval(checkReminder, 60 * 1000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); maybeShowRecap(); checkReminder(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); maybeShowRecap(); checkReminder(); Cloud.syncNow(); } });
 
 // ---------- Boot ----------
 applyTheme();
@@ -982,4 +998,5 @@ const params = new URLSearchParams(location.search);
 if (params.get('action') === 'log') setTimeout(() => openLogSheet(guessMeal()), 100);
 if (params.get('action') === 'photo') setTimeout(() => openLogSheet(guessMeal(), 'photo'), 100);
 render();
+Cloud.syncNow();
 setTimeout(() => { maybeShowRecap(); checkReminder(); }, 1500);

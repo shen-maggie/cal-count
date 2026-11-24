@@ -20,3 +20,24 @@ Keys are stored only on your phone and sent only to that provider.
 
 ## Updating
 After editing files, bump `VERSION` in `sw.js` so phones pick up the new version.
+
+## Optional account sync (Supabase, free)
+
+1. Create a free project at supabase.com.
+2. In the project's **SQL Editor**, run:
+
+```sql
+create table public.fastcal_data (
+  user_id uuid primary key references auth.users on delete cascade default auth.uid(),
+  data jsonb not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.fastcal_data enable row level security;
+create policy "own row" on public.fastcal_data for all
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+```
+
+3. In **Authentication → URL Configuration**, set Site URL to your GitHub Pages address.
+4. Put the project URL and the anon (publishable) key from **Project Settings → API** into `CLOUD` at the top of `sync.js`.
+
+Signing in is optional. Each account stores one copy of the app data; the most recently changed copy wins.

@@ -18,6 +18,7 @@
   --berry-soft: #f0d2c2;
   --warn: #d4913a;
   --danger: #b9503f;
+  --ring1: #a9c2c4; --ring2: #d3715d;  /* fasting ring gradient: start → end */
   --radius: 18px;
   --shadow: 3px 3px 0 var(--ink);
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -151,28 +152,28 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { -webkit-a
 input::-webkit-date-and-time-value { text-align: left; }
 
 /* ---------- Seasonal palettes (accents from the 4 seasons mood board) ---------- */
-:root[data-theme="spring"] {
+:root[data-theme="spring"] { --ring1:#99b4aa; --ring2:#cf7d65;
   --bg: #6b6d43; --bg-line: rgba(255,245,225,.08); --on-bg: #f2dec7;
   --card: #f6e8d6; --card2: #ecd0bd; --track: #e6cfb8; --line-soft: #e1c7ad;
   --ink: #3f3d27; --text: #3f3d27; --muted: #85795f;
   --accent: #aba66f; --accent-ink: #2b2c12; --accent2: #99b4aa; --accent2-ink: #1f3a33;
   --berry: #cf7d65; --berry-soft: #f3d6c8; --danger: #b5523e;
 }
-:root[data-theme="summer"] {
+:root[data-theme="summer"] { --ring1:#aaa06d; --ring2:#e48c35;
   --bg: #5d695d; --bg-line: rgba(255,240,210,.08); --on-bg: #f6e6cc;
   --card: #f8ecda; --card2: #ebceae; --track: #ead3b3; --line-soft: #e3c9a6;
   --ink: #3f3a2c; --text: #3f3a2c; --muted: #8a7a5e;
   --accent: #aaa06d; --accent-ink: #2b2a10; --accent2: #f5b74e; --accent2-ink: #4a3206;
   --berry: #e48c35; --berry-soft: #f8dcb5; --danger: #c0532f;
 }
-:root[data-theme="autumn"] {
+:root[data-theme="autumn"] { --ring1:#b1a56b; --ring2:#8c0610;
   --bg: #66140e; --bg-line: rgba(255,230,200,.07); --on-bg: #f4d4a6;
   --card: #f8e6cb; --card2: #f0d0a2; --track: #ecd0a8; --line-soft: #e5c79c;
   --ink: #45190f; --text: #45190f; --muted: #8f6a55;
   --accent: #b1a56b; --accent-ink: #2c2a10; --accent2: #b36c60; --accent2-ink: #fff5ea;
   --berry: #8c0610; --berry-soft: #f2cdb9; --danger: #8c0610;
 }
-:root[data-theme="winter"] {
+:root[data-theme="winter"] { --ring1:#525871; --ring2:#cd9fa0;
   --bg: #525871; --bg-line: rgba(255,240,230,.08); --on-bg: #f8dcc6;
   --card: #fbefe6; --card2: #f2d2c0; --track: #ecd6cc; --line-soft: #e6d0c6;
   --ink: #363a4d; --text: #363a4d; --muted: #857c91;
