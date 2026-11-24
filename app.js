@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '16';
+const APP_VERSION = '17';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -23,6 +23,7 @@ const DEFAULT_STATE = {
     streakFreeze: true,
     reminders: true,
     weightUnit: 'lb',
+    theme: 'cocoa',             // cocoa | auto | spring | summer | autumn | winter
     aiProvider: 'gemini',       // 'gemini' (free tier) or 'claude' (paid API)
     geminiKey: '',
     geminiModel: 'gemini-3.1-flash-lite',
@@ -50,6 +51,21 @@ function load() {
 }
 let S = load();
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(S)); }
+
+// ---------- Color themes ----------
+const THEMES = {
+  cocoa:  { label: 'Cocoa', bg: '#8b6f63', sw: ['#8b6f63', '#f1e4cf', '#9aa86f', '#d3715d'] },
+  spring: { label: 'Spring', bg: '#6b6d43', sw: ['#99b4aa', '#aba66f', '#cf7d65', '#f2dec7'] },
+  summer: { label: 'Summer honey', bg: '#5d695d', sw: ['#e48c35', '#f5b74e', '#aaa06d', '#5d695d'] },
+  autumn: { label: 'Autumn', bg: '#66140e', sw: ['#f4d4a6', '#b1a56b', '#b36c60', '#8c0610'] },
+  winter: { label: 'Winter', bg: '#525871', sw: ['#525871', '#857c91', '#cd9fa0', '#f8ccaa'] },
+};
+function seasonNow(d = new Date()) { const m = d.getMonth(); return m >= 2 && m <= 4 ? 'spring' : m >= 5 && m <= 7 ? 'summer' : m >= 8 && m <= 10 ? 'autumn' : 'winter'; }
+function applyTheme() {
+  const t = S.settings.theme === 'auto' ? seasonNow() : (THEMES[S.settings.theme] ? S.settings.theme : 'cocoa');
+  document.documentElement.dataset.theme = t;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEMES[t].bg);
+}
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
 // ---------- Time helpers ----------
@@ -694,7 +710,7 @@ function renderWeight() {
       <div class="small" style="text-align:right">${weekAgo ? `7d: <b>${delta(latest.value - weekAgo.value)}</b><br>` : ''}Total: <b>${delta(latest.value - first.value)}</b></div></div>
       <div class="seg" style="margin-top:12px" id="rangeSeg">${['30', '90', '365', 'all'].map(r => `<button data-r="${r}" class="${weightRange === r ? 'active' : ''}">${r === 'all' ? 'All' : r === '365' ? '1y' : r + 'd'}</button>`).join('')}</div>
       <div class="chart" id="chart"></div>
-      <div class="small muted"><span style="color:#d3715d">●</span> daily weigh-in &nbsp; <span style="color:#9aa86f">━</span> 7-day trend</div>
+      <div class="small muted"><span style="color:var(--berry)">●</span> daily weigh-in &nbsp; <span style="color:var(--accent)">━</span> 7-day trend</div>
     </div>
     <div class="card"><h3>History</h3><ul class="list">${[...ws].reverse().slice(0, 60).map(w => `<li><span class="name">${fmtDay(w.date)}</span><span class="kcal">${w.value} ${unit}</span><button class="icon" data-delw="${w.date}">✕</button></li>`).join('')}</ul></div>` : '<div class="card muted">Log your first weigh-in to see your trend.</div>'}`;
   document.getElementById('wAdd').onclick = () => {
@@ -723,11 +739,11 @@ function drawChart(el, ws) {
   const y = v => P.t + (hi - v) / (hi - lo) * (H - P.t - P.b);
   const ticks = [lo + pad, (lo + hi) / 2, hi - pad];
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">
-    ${ticks.map(t => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" stroke="#d8c3a3" stroke-dasharray="3 3"/><text x="${P.l - 4}" y="${y(t) + 4}" fill="#8a6f60" font-size="10" text-anchor="end">${t.toFixed(1)}</text>`).join('')}
-    <text x="${P.l}" y="${H - 6}" fill="#8a6f60" font-size="10">${fmtDay(pts[0].date)}</text>
-    <text x="${W - P.r}" y="${H - 6}" fill="#8a6f60" font-size="10" text-anchor="end">${fmtDay(pts[pts.length - 1].date)}</text>
-    ${tr.length > 1 ? `<polyline fill="none" stroke="#9aa86f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${tr.map(p => `${x(p.date)},${y(p.value)}`).join(' ')}"/>` : ''}
-    ${pts.map(p => `<circle cx="${x(p.date)}" cy="${y(p.value)}" r="3.5" fill="#d3715d" stroke="#4a3329" stroke-width="1"/>`).join('')}
+    ${ticks.map(t => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" style="stroke:var(--line-soft)" stroke-dasharray="3 3"/><text x="${P.l - 4}" y="${y(t) + 4}" style="fill:var(--muted)" font-size="10" text-anchor="end">${t.toFixed(1)}</text>`).join('')}
+    <text x="${P.l}" y="${H - 6}" style="fill:var(--muted)" font-size="10">${fmtDay(pts[0].date)}</text>
+    <text x="${W - P.r}" y="${H - 6}" style="fill:var(--muted)" font-size="10" text-anchor="end">${fmtDay(pts[pts.length - 1].date)}</text>
+    ${tr.length > 1 ? `<polyline fill="none" style="stroke:var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${tr.map(p => `${x(p.date)},${y(p.value)}`).join(' ')}"/>` : ''}
+    ${pts.map(p => `<circle cx="${x(p.date)}" cy="${y(p.value)}" r="3.5" style="fill:var(--berry);stroke:var(--ink)" stroke-width="1"/>`).join('')}
   </svg>`;
 }
 
@@ -845,6 +861,8 @@ function renderSettings() {
       <label style="margin-top:12px">Meals to show</label>
       ${MEALS.map(m => `<div class="switch"><span>${m.label}</span><input type="checkbox" data-meal="${m.id}" ${st.meals[m.id] ? 'checked' : ''}></div>`).join('')}
       <p class="small muted">After you log your last meal of the day (${mealLabel(lastMainMeal())}), you'll be asked to start your fast.</p></div>
+    <div class="card"><h2>Color palette</h2>
+      <div class="theme-grid">${['auto', ...Object.keys(THEMES)].map(k => { const t = THEMES[k === 'auto' ? seasonNow() : k]; return `<button class="theme-opt ${st.theme === k ? 'active' : ''}" data-theme-opt="${k}"><span class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span>${k === 'auto' ? `Match season<br><span class="small muted">now: ${THEMES[seasonNow()].label}</span>` : t.label}</button>`; }).join('')}</div></div>
     <div class="card"><h2>Weight</h2><label>Unit</label><select id="sUnit"><option ${st.weightUnit === 'lb' ? 'selected' : ''}>lb</option><option ${st.weightUnit === 'kg' ? 'selected' : ''}>kg</option></select></div>
     <div class="card"><h2>AI photo logging</h2>
       <label>AI provider</label><select id="sProv"><option value="gemini" ${st.aiProvider !== 'claude' ? 'selected' : ''}>Google Gemini (free tier)</option><option value="claude" ${st.aiProvider === 'claude' ? 'selected' : ''}>Anthropic Claude (paid, ~1–2¢/photo)</option></select>
@@ -871,6 +889,7 @@ function renderSettings() {
   document.getElementById('sRem').onchange = e => set('reminders', e.target.checked);
   document.getElementById('sFreeze').onchange = e => set('streakFreeze', e.target.checked);
   document.getElementById('sGoal').onchange = e => { set('calorieGoal', +e.target.value || 1800); render(); };
+  view.querySelectorAll('[data-theme-opt]').forEach(b => b.onclick = () => { set('theme', b.dataset.themeOpt); applyTheme(); render(); });
   document.getElementById('sUnit').onchange = e => set('weightUnit', e.target.value);
   document.getElementById('sProv').onchange = e => { set('aiProvider', e.target.value); render(); };
   const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
@@ -892,7 +911,7 @@ function renderSettings() {
   document.getElementById('sImpBtn').onclick = () => document.getElementById('sImp').click();
   document.getElementById('sImp').onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
-    try { const d = JSON.parse(await f.text()); if (!d.settings) throw 0; localStorage.setItem(STORE_KEY, JSON.stringify(d)); S = load(); toast('Backup restored'); render(); } catch { toast('That file isn\'t a FastCal backup'); }
+    try { const d = JSON.parse(await f.text()); if (!d.settings) throw 0; localStorage.setItem(STORE_KEY, JSON.stringify(d)); S = load(); applyTheme(); toast('Backup restored'); render(); } catch { toast('That file isn\'t a FastCal backup'); }
   };
   document.getElementById('sWipe').onclick = async () => { if ((await confirmDialog({ title: 'Erase everything?', body: 'This deletes all fasts, food, weights and recipes from this device.', ok: 'Erase', danger: true })) === true) { localStorage.removeItem(STORE_KEY); S = load(); render(); } };
 }
@@ -957,6 +976,7 @@ setInterval(checkReminder, 60 * 1000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); maybeShowRecap(); checkReminder(); } });
 
 // ---------- Boot ----------
+applyTheme();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 const params = new URLSearchParams(location.search);
 if (params.get('action') === 'log') setTimeout(() => openLogSheet(guessMeal()), 100);
