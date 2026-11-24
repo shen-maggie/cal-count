@@ -1,6 +1,6 @@
 {
-  "name": "FastCal",
-  "short_name": "FastCal",
+  "name": "calcount",
+  "short_name": "calcount",
   "description": "Calorie tracking + intermittent fasting",
   "start_url": "./",
   "scope": "./",

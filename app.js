@@ -1,9 +1,9 @@
-/* FastCal: calorie tracking + intermittent fasting PWA. Data lives in localStorage on the device, with optional cloud sync (sync.js). */
+/* calcount: calorie tracking + intermittent fasting PWA. Data lives in localStorage on the device, with optional cloud sync (sync.js). */
 'use strict';
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '20';
+const APP_VERSION = '21';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -914,7 +914,7 @@ function renderSettings() {
   });
   document.getElementById('sNotif').onclick = async () => {
     if (!('Notification' in window)) return toast(standalone ? 'Notifications not supported on this device' : 'Add to Home Screen first, then try again');
-    const p = await Notification.requestPermission(); toast(p === 'granted' ? 'Notifications on' : 'Notifications ' + p); if (p === 'granted') notify('FastCal', 'Reminders are on. You\'ll get a nudge when it\'s time to start your fast.'); render();
+    const p = await Notification.requestPermission(); toast(p === 'granted' ? 'Notifications on' : 'Notifications ' + p); if (p === 'granted') notify('calcount', 'Reminders are on. You\'ll get a nudge when it\'s time to start your fast.'); render();
   };
   Cloud.bindCard();
   document.getElementById('sIcs').onclick = downloadICS;
@@ -922,7 +922,7 @@ function renderSettings() {
   document.getElementById('sImpBtn').onclick = () => document.getElementById('sImp').click();
   document.getElementById('sImp').onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
-    try { const d = JSON.parse(await f.text()); if (!d.settings) throw 0; localStorage.setItem(STORE_KEY, JSON.stringify(d)); S = load(); save(); applyTheme(); toast('Backup restored'); render(); } catch { toast('That file isn\'t a FastCal backup'); }
+    try { const d = JSON.parse(await f.text()); if (!d.settings) throw 0; localStorage.setItem(STORE_KEY, JSON.stringify(d)); S = load(); save(); applyTheme(); toast('Backup restored'); render(); } catch { toast('That file isn\'t a calcount backup'); }
   };
   document.getElementById('sWipe').onclick = async () => {
     const body = 'This deletes all fasts, food, weights and recipes from this device.' + (Cloud.signedIn() ? ' The copy in your account is kept, and this phone is signed out.' : '');
@@ -934,10 +934,10 @@ function renderSettings() {
 
 // On iPhone, share the file so it can be saved to Files (plain downloads are unreliable in Home Screen apps).
 async function exportBackup() {
-  const name = `fastcal-backup-${dayKey()}.json`, text = JSON.stringify(S, null, 1);
+  const name = `calcount-backup-${dayKey()}.json`, text = JSON.stringify(S, null, 1);
   try {
     const file = new File([text], name, { type: 'application/json' });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'FastCal backup' }); return; }
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'calcount backup' }); return; }
   } catch (e) { if (e && e.name === 'AbortError') return; }
   download(name, text, 'application/json');
 }
@@ -956,11 +956,11 @@ function downloadICS() {
     starts.sort((a, b) => a - b); const first = starts[0].getTime() > Date.now() ? starts[0] : new Date(starts[0].getTime() + 7 * 864e5);
     const days = [...new Set(starts.map(d => BY[d.getDay()]))].join(',');
     return ['BEGIN:VEVENT', `UID:fastcal-${Date.now()}-${n}@fastcal`, `DTSTAMP:${dt(new Date())}`, `DTSTART:${dt(first)}`, `DTEND:${dt(new Date(first.getTime() + 15 * 6e4))}`,
-      `RRULE:FREQ=WEEKLY;BYDAY=${days}`, `SUMMARY:Start your ${S.settings.fastHours}h fast`, 'DESCRIPTION:Time to start fasting. Open FastCal and tap Start fast.',
+      `RRULE:FREQ=WEEKLY;BYDAY=${days}`, `SUMMARY:Start your ${S.settings.fastHours}h fast`, 'DESCRIPTION:Time to start fasting. Open calcount and tap Start fast.',
       'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Start your fast', 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT'].join('\r\n');
   });
   if (!events.length) return toast('No fasting days are scheduled');
-  download('fastcal-reminders.ics', ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//FastCal//EN', ...events, 'END:VCALENDAR'].join('\r\n'), 'text/calendar');
+  download('calcount-reminders.ics', ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//calcount//EN', ...events, 'END:VCALENDAR'].join('\r\n'), 'text/calendar');
 }
 
 // ---------- Reminders ----------

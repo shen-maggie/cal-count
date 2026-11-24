@@ -1,4 +1,4 @@
-# FastCal
+# calcount
 
 Calorie tracking + intermittent fasting, as an installable web app (PWA). No server: everything is stored on your phone.
 
