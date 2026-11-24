@@ -2,11 +2,16 @@
    The whole app state is stored as one row per user; the most recently changed copy wins. */
 'use strict';
 
+// One-time move of data saved under the app's old name (FastCal) to the new keys.
+for (const k of ['v1', 'auth', 'sync']) {
+  try { const old = localStorage.getItem('fastcal_' + k); if (old !== null && localStorage.getItem('calcount_' + k) === null) localStorage.setItem('calcount_' + k, old); } catch {}
+}
+
 // Fill these in from Supabase: Project Settings → API (URL and the "anon"/publishable key). Both are safe to publish.
 const CLOUD = { url: 'https://aibglewvmrogcpezntyb.supabase.co', key: 'sb_publishable_aPIjlIuUjHHwyWAo5h2Mgg_bEaB6Laq' };
 
 const Cloud = (() => {
-  const AUTH_KEY = 'fastcal_auth', SYNC_KEY = 'fastcal_sync';
+  const AUTH_KEY = 'calcount_auth', SYNC_KEY = 'calcount_sync';
   const ready = () => !!(CLOUD.url && CLOUD.key);
   const readJSON = k => { try { return JSON.parse(localStorage.getItem(k)) || null; } catch { return null; } };
   let auth = readJSON(AUTH_KEY);            // {access_token, refresh_token, expires_at, user_id, email}
@@ -41,13 +46,13 @@ const Cloud = (() => {
   const hasLocalData = () => (S.fasts.length + S.foods.length + S.weights.length + (S.recipes || []).length + (S.ingredients || []).length) > 0;
 
   async function fetchRemote() {
-    const rows = await api(`/rest/v1/fastcal_data?select=data,updated_at&user_id=eq.${auth.user_id}`, { token: await token() });
+    const rows = await api(`/rest/v1/calcount_data?select=data,updated_at&user_id=eq.${auth.user_id}`, { token: await token() });
     return rows && rows[0] ? rows[0] : null;
   }
   async function push() {
     if (!ready() || !auth) return;
     clearTimeout(pushTimer); pushTimer = null;
-    await api('/rest/v1/fastcal_data?on_conflict=user_id', { method: 'POST', token: await token(), headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    await api('/rest/v1/calcount_data?on_conflict=user_id', { method: 'POST', token: await token(), headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: { user_id: auth.user_id, data: S, updated_at: new Date().toISOString() } });
     sync = { user_id: auth.user_id, lastSync: Date.now(), lastRemote: S.meta.updatedAt || 0 }; saveSync(); status = '';
   }

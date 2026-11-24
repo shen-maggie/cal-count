@@ -2,8 +2,8 @@
 'use strict';
 
 // ---------- Storage ----------
-const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '21';
+const STORE_KEY = 'calcount_v1';
+const APP_VERSION = '22';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -955,7 +955,7 @@ function downloadICS() {
   const events = Object.entries(groups).map(([hm, starts], n) => {
     starts.sort((a, b) => a - b); const first = starts[0].getTime() > Date.now() ? starts[0] : new Date(starts[0].getTime() + 7 * 864e5);
     const days = [...new Set(starts.map(d => BY[d.getDay()]))].join(',');
-    return ['BEGIN:VEVENT', `UID:fastcal-${Date.now()}-${n}@fastcal`, `DTSTAMP:${dt(new Date())}`, `DTSTART:${dt(first)}`, `DTEND:${dt(new Date(first.getTime() + 15 * 6e4))}`,
+    return ['BEGIN:VEVENT', `UID:calcount-${Date.now()}-${n}@calcount`, `DTSTAMP:${dt(new Date())}`, `DTSTART:${dt(first)}`, `DTEND:${dt(new Date(first.getTime() + 15 * 6e4))}`,
       `RRULE:FREQ=WEEKLY;BYDAY=${days}`, `SUMMARY:Start your ${S.settings.fastHours}h fast`, 'DESCRIPTION:Time to start fasting. Open calcount and tap Start fast.',
       'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Start your fast', 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT'].join('\r\n');
   });
@@ -968,7 +968,7 @@ async function notify(title, body) {
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') return false;
     const reg = await navigator.serviceWorker?.getRegistration();
-    if (reg) await reg.showNotification(title, { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'fastcal' });
+    if (reg) await reg.showNotification(title, { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'calcount' });
     else new Notification(title, { body });
     return true;
   } catch { return false; }

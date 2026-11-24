@@ -27,15 +27,15 @@ After editing files, bump `VERSION` in `sw.js` so phones pick up the new version
 2. In the project's **SQL Editor**, run:
 
 ```sql
-create table public.fastcal_data (
+create table public.calcount_data (
   user_id uuid primary key references auth.users on delete cascade default auth.uid(),
   data jsonb not null,
   updated_at timestamptz not null default now()
 );
-alter table public.fastcal_data enable row level security;
-create policy "own row" on public.fastcal_data for all
+alter table public.calcount_data enable row level security;
+create policy "own row" on public.calcount_data for all
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
-grant select, insert, update, delete on public.fastcal_data to authenticated;
+grant select, insert, update, delete on public.calcount_data to authenticated;
 ```
 
 3. In **Authentication → URL Configuration**, set Site URL to your GitHub Pages address.
