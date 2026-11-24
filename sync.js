@@ -3,7 +3,7 @@
 'use strict';
 
 // Fill these in from Supabase: Project Settings → API (URL and the "anon"/publishable key). Both are safe to publish.
-const CLOUD = { url: '', key: '' };
+const CLOUD = { url: 'https://aibglewvmrogcpezntyb.supabase.co', key: 'sb_publishable_aPIjlIuUjHHwyWAo5h2Mgg_bEaB6Laq' };
 
 const Cloud = (() => {
   const AUTH_KEY = 'fastcal_auth', SYNC_KEY = 'fastcal_sync';
@@ -18,7 +18,7 @@ const Cloud = (() => {
   async function api(path, { method = 'GET', body, token, headers = {} } = {}) {
     const r = await fetch(CLOUD.url.replace(/\/$/, '') + path, {
       method, cache: 'no-store',
-      headers: { apikey: CLOUD.key, 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || CLOUD.key), ...headers },
+      headers: { apikey: CLOUD.key, 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...headers }, // publishable keys go only in apikey
       body: body ? JSON.stringify(body) : undefined,
     });
     const text = await r.text(); let j = null; try { j = text ? JSON.parse(text) : null; } catch {}
