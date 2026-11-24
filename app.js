@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'fastcal_v1';
-const APP_VERSION = '19';
+const APP_VERSION = '20';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -998,5 +998,5 @@ const params = new URLSearchParams(location.search);
 if (params.get('action') === 'log') setTimeout(() => openLogSheet(guessMeal()), 100);
 if (params.get('action') === 'photo') setTimeout(() => openLogSheet(guessMeal(), 'photo'), 100);
 render();
-Cloud.syncNow();
+Cloud.handleEmailLink(); Cloud.syncNow();
 setTimeout(() => { maybeShowRecap(); checkReminder(); }, 1500);

@@ -13,6 +13,7 @@ const Cloud = (() => {
   let sync = readJSON(SYNC_KEY) || {};      // {user_id, lastSync (ms), lastRemote (ms)}
   let pushTimer = null, busy = false, status = '';
   const saveAuth = () => auth ? localStorage.setItem(AUTH_KEY, JSON.stringify(auth)) : localStorage.removeItem(AUTH_KEY);
+  const home = () => location.origin + location.pathname.replace(/index\.html$/, '');
   const saveSync = () => localStorage.setItem(SYNC_KEY, JSON.stringify(sync));
 
   async function api(path, { method = 'GET', body, token, headers = {} } = {}) {
@@ -91,11 +92,11 @@ const Cloud = (() => {
     await syncNow({ quiet: false });
   }
   async function signUp(email, password) {
-    const j = await api('/auth/v1/signup', { method: 'POST', body: { email, password } });
+    const j = await api('/auth/v1/signup?redirect_to=' + encodeURIComponent(home()), { method: 'POST', body: { email, password } });
     if (j && j.access_token) { setSession(j); await syncNow({ quiet: false }); return true; }
     return false; // email confirmation is on: they confirm, then sign in
   }
-  async function resetPassword(email) { await api('/auth/v1/recover', { method: 'POST', body: { email } }); }
+  async function resetPassword(email) { await api('/auth/v1/recover?redirect_to=' + encodeURIComponent(home()), { method: 'POST', body: { email } }); }
   async function signOut() {
     if (pushTimer) { try { await push(); } catch {} }
     try { await api('/auth/v1/logout', { method: 'POST', token: auth.access_token }); } catch {}
@@ -129,5 +130,20 @@ const Cloud = (() => {
     if ($('acSync')) $('acSync').onclick = e => run(e.target, () => syncNow({ quiet: false }));
     if ($('acOut')) $('acOut').onclick = async e => { if ((await confirmDialog({ title: 'Sign out?', body: 'Your data stays on this phone. It just stops syncing.', ok: 'Sign out' })) === true) run(e.target, signOut); };
   }
-  return { ready, signedIn: () => !!auth, syncNow, changed, signOut, cardHTML, bindCard };
+  // Links from Supabase emails land here with tokens in the URL hash.
+  async function handleEmailLink() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (!h.get('type') && !h.get('error')) return;
+    history.replaceState(null, '', home());
+    if (h.get('error')) return toast(h.get('error_description') || 'That link has expired');
+    if (h.get('type') === 'recovery' && h.get('access_token')) {
+      openSheet(`<h2>Set a new password</h2><label>New password</label><input type="password" id="npw" autocomplete="new-password" placeholder="At least 6 characters"><button class="btn primary" id="npwGo" style="margin-top:14px">Save password</button>`);
+      document.getElementById('npwGo').onclick = async () => {
+        const pw = document.getElementById('npw').value; if (pw.length < 6) return toast('Use at least 6 characters');
+        try { await api('/auth/v1/user', { method: 'PUT', token: h.get('access_token'), body: { password: pw } }); closeSheet(); toast('Password updated. Sign in with it in the app.'); }
+        catch (e) { toast(e.message); }
+      };
+    } else toast('Email confirmed! Now sign in from Settings → Account.');
+  }
+  return { ready, handleEmailLink, signedIn: () => !!auth, syncNow, changed, signOut, cardHTML, bindCard };
 })();
