@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '22';
+const APP_VERSION = '23';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -283,6 +283,7 @@ function closeSheetSilently() { closeSheet(); }
 
 // ---------- Home ----------
 // Ring with an inked outline on both edges, like a hand-drawn gauge
+const RING = ['var(--ring1)', 'var(--ring2)', 'var(--ring3)', 'var(--ring4)']; // palette colors along the ring
 function ringSVG(pct, color, id = 'ringArc') {
   const r = 115, c = 2 * Math.PI * r, p = Math.min(1, Math.max(0, pct));
   const base = `<circle cx="130" cy="130" r="${r}" style="stroke:var(--track)" stroke-width="22" fill="none"/>
@@ -291,11 +292,11 @@ function ringSVG(pct, color, id = 'ringArc') {
   const arc = (stroke) => `<circle id="${id}" cx="130" cy="130" r="${r}" style="stroke:${stroke}" stroke-width="19" fill="none" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p)}"/>`;
   if (!Array.isArray(color)) return `<svg viewBox="0 0 260 260">${base}${arc(color)}</svg>`;
   // Gradient that follows the ring: small colored slices, revealed by the progress arc used as a mask
-  const [c1, c2] = color, N = 90, pt = a => `${(130 + r * Math.cos(a)).toFixed(2)} ${(130 + r * Math.sin(a)).toFixed(2)}`;
+  const cs = color, c1 = cs[0], N = 90, pt = a => `${(130 + r * Math.cos(a)).toFixed(2)} ${(130 + r * Math.sin(a)).toFixed(2)}`;
   let segs = '';
   for (let i = 0; i < N; i++) {
-    const a0 = (i / N) * 2 * Math.PI, a1 = Math.min(i + 1.6, N) / N * 2 * Math.PI, mix = Math.round((i / (N - 1)) * 100);
-    segs += `<path d="M${pt(a0)} A${r} ${r} 0 0 1 ${pt(a1)}" style="stroke:color-mix(in oklab, ${c2} ${mix}%, ${c1})" stroke-width="20" fill="none"/>`;
+    const a0 = (i / N) * 2 * Math.PI, a1 = Math.min(i + 1.6, N) / N * 2 * Math.PI, k = (i / (N - 1)) * (cs.length - 1), j = Math.min(Math.floor(k), cs.length - 2), mix = Math.round((k - j) * 100);
+    segs += `<path d="M${pt(a0)} A${r} ${r} 0 0 1 ${pt(a1)}" style="stroke:color-mix(in oklab, ${cs[j + 1]} ${mix}%, ${cs[j]})" stroke-width="20" fill="none"/>`;
   }
   segs += `<path d="M${pt(-0.2)} A${r} ${r} 0 0 1 ${pt(0.01)}" style="stroke:${c1}" stroke-width="20" fill="none"/>`; // under the rounded start cap
   return `<svg viewBox="0 0 260 260">${base}<mask id="${id}Mask" maskUnits="userSpaceOnUse" x="0" y="0" width="260" height="260">${arc('#fff')}</mask><g mask="url(#${id}Mask)">${segs}</g></svg>`;
@@ -313,7 +314,7 @@ function renderHome() {
     view.innerHTML = `
       <div class="card center">
         ${streakHTML()}
-        <div class="ring-wrap">${ringSVG((Date.now() - f.start) / goalMs, ['var(--ring1)', 'var(--ring2)'])}
+        <div class="ring-wrap">${ringSVG((Date.now() - f.start) / goalMs, RING)}
           <div class="ring-center"><div class="ring-label">Fasting</div><div class="ring-time" id="tElapsed"></div><div class="ring-label" id="tRemain"></div></div></div>
         <div class="row between small muted"><span>Started ${fmtTime(f.start)} ${dayLabelFor(f.start)}</span><span>Goal ${fmtTime(f.start + goalMs)} ${dayLabelFor(f.start + goalMs)}</span></div>
         <div style="margin-top:14px" class="btn-grid">
@@ -353,7 +354,7 @@ function renderHome() {
       </div>
       <div class="card center">
         ${planPill}
-        <div class="ring-wrap sm">${ringSVG(pct, over ? 'var(--danger)' : 'var(--berry)', 'calArc')}
+        <div class="ring-wrap sm">${ringSVG(pct, over ? 'var(--danger)' : RING, 'calArc')}
           <div class="ring-center"><div class="big-num">${Math.abs(st.calorieGoal - todayK).toLocaleString()}</div>
             <div class="ring-label">kcal ${over ? 'over' : 'left'}</div>
             <div class="small muted" style="margin-top:4px">${todayK.toLocaleString()} of ${st.calorieGoal.toLocaleString()} eaten</div></div></div>
