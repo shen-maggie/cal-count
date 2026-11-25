@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '27';
+const APP_VERSION = '28';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -577,6 +577,14 @@ function searchCommon(q, limit = 40) {
   return CF.filter(f => words.every(w => f.name.toLowerCase().includes(w)))
     .sort((a, b) => a.name.toLowerCase().indexOf(words[0]) - b.name.toLowerCase().indexOf(words[0]) || a.i - b.i).slice(0, limit);
 }
+// Chain restaurant items (restaurants.js), per serving
+const RF = (typeof RESTAURANT_FOODS !== 'undefined' ? RESTAURANT_FOODS : []).map(([chain, item, kcal, p, c, f, srv], i) => ({ i, chain, item, kcal, p, c, f, srv, hay: `${chain} ${item}`.toLowerCase().replace(/[’']/g, '') }));
+const RF_CHAINS = [...new Set(RF.map(r => r.chain))];
+function searchRestaurants(q, limit = 40) {
+  const words = q.toLowerCase().replace(/[’']/g, '').split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  return RF.filter(r => words.every(w => r.hay.includes(w))).slice(0, limit);
+}
 // Saved copy of a common food so recipes can use it like any ingredient
 function ingredientFromCommon(food) {
   let ing = S.ingredients.find(i => i.name.toLowerCase() === food.name.toLowerCase() && i.unit === 'g');
@@ -586,16 +594,28 @@ function ingredientFromCommon(food) {
 
 function drawLibraryPick(el, state) {
   el.innerHTML = `
-    <input id="libSearch" placeholder="Search your recipes, ingredients & common foods…" autocomplete="off">
+    <input id="libSearch" placeholder="Search foods, restaurants, recipes… e.g. big mac" autocomplete="off">
     <ul class="list" id="libList"></ul>
-    <p class="small muted">Common foods use USDA averages. Amounts are in grams unless noted.</p>`;
+    <p class="small muted">Common foods use USDA averages (amounts in grams). Restaurant items are approximate, from each chain's published nutrition info.</p>`;
   const list = document.getElementById('libList');
   const draw = q => {
     q = (q || '').toLowerCase().trim();
     const recs = S.recipes.filter(r => r.name.toLowerCase().includes(q)).map(r => `<li><span class="name">🍲 ${esc(r.name)}<br><span class="small muted">${Math.round(recipePerServing(r))} kcal / serving</span></span><input type="number" inputmode="decimal" value="1" step="0.25" style="width:70px" data-r="${r.id}"><span class="small muted">srv</span><button class="btn small primary" data-addr="${r.id}">Add</button></li>`);
     const ings = S.ingredients.filter(i => !i.common && i.name.toLowerCase().includes(q)).map(i => `<li><span class="name">🥕 ${esc(i.name)}<br><span class="small muted">${i.kcalPerUnit} kcal / ${i.unitSize} ${esc(i.unit)}</span></span><input type="number" inputmode="decimal" value="${i.unitSize}" style="width:70px" data-i="${i.id}"><span class="small muted">${esc(i.unit)}</span><button class="btn small primary" data-addi="${i.id}">Add</button></li>`);
     const commons = searchCommon(q).map(f => `<li><span class="name">${esc(f.name)}<br><span class="small muted">${f.kcal} kcal/100 g · ${esc(f.srvLabel)} = ${f.srvG} g (${Math.round(f.kcal * f.srvG / 100)})</span></span><input type="number" inputmode="decimal" value="${f.srvG}" style="width:70px" data-c="${f.i}"><span class="small muted">g</span><button class="btn small primary" data-addc="${f.i}">Add</button></li>`);
-    list.innerHTML = recs.concat(ings, commons).join('') || `<li class="muted">${q ? 'No matches. Try Quick add or create an ingredient in the Recipes tab.' : 'Type to search common foods.'}</li>`;
+    const rests = searchRestaurants(q).map(r => `<li><span class="name">🍔 ${esc(r.item)}<br><span class="small muted">${esc(r.chain)} · ${r.kcal} kcal / ${esc(r.srv)}</span></span><input type="number" inputmode="decimal" value="1" step="0.5" style="width:60px" data-rq="${r.i}"><span class="small muted">×</span><button class="btn small primary" data-addrf="${r.i}">Add</button></li>`);
+    const chips = !q ? `<li style="display:block;border:0"><div class="small muted" style="margin-bottom:6px">Restaurants</div><div class="chips">${RF_CHAINS.map(c => `<button class="chip" data-chain="${esc(c)}">${esc(c)}</button>`).join('')}</div></li>` : '';
+    const ask = q && aiKey() ? `<li style="display:block;border:0;padding-top:12px"><button class="btn blue" id="askAI">✨ Look up “${esc(q)}” with AI</button><div id="askOut"></div></li>` : '';
+    list.innerHTML = (recs.concat(ings, rests, commons).join('') || `<li class="muted">${q ? `No matches.${aiKey() ? ' Try the AI lookup below, or Quick add.' : ' Try Quick add, or add an AI key in Settings to look up any food.'}` : 'Type to search your foods, restaurant menus and common foods.'}</li>`) + chips + ask;
+    list.querySelectorAll('[data-chain]').forEach(b => b.onclick = () => { const inp = document.getElementById('libSearch'); inp.value = b.dataset.chain; draw(inp.value); });
+    list.querySelectorAll('[data-addrf]').forEach(b => b.onclick = () => { const r = RF[+b.dataset.addrf]; const n = +list.querySelector(`[data-rq="${r.i}"]`).value || 1; addFoods([{ name: `${r.chain} ${r.item}${n !== 1 ? ` (×${n})` : ''}`, kcal: r.kcal * n, protein: r.p * n, carbs: r.c * n, fat: r.f * n, source: 'restaurant' }], state.meal, state.date); });
+    if (ask) document.getElementById('askAI').onclick = async e => {
+      const out = document.getElementById('askOut'); e.target.disabled = true;
+      out.innerHTML = '<div class="spinner"></div><p class="center small muted" id="aiStatus">Looking it up…</p>';
+      try { renderAIResult(out, await estimateFood(null, '', lookupPrompt(q)), state); }
+      catch (err) { out.innerHTML = `<div class="warnbox">${esc(err.message)}</div>`; }
+      e.target.disabled = false;
+    };
     list.querySelectorAll('[data-addr]').forEach(b => b.onclick = () => { const r = S.recipes.find(x => x.id === b.dataset.addr); const srv = +list.querySelector(`[data-r="${r.id}"]`).value || 1; addFoods([{ name: `${r.name} (${srv} srv)`, kcal: recipePerServing(r) * srv, source: 'recipe' }], state.meal, state.date); });
     list.querySelectorAll('[data-addi]').forEach(b => b.onclick = () => { const i = ingById(b.dataset.addi); const q = +list.querySelector(`[data-i="${i.id}"]`).value || 0; addFoods([{ name: `${i.name} (${q} ${i.unit})`, kcal: ingKcal(i, q), source: 'ingredient' }], state.meal, state.date); });
     list.querySelectorAll('[data-addc]').forEach(b => b.onclick = () => { const f = CF[+b.dataset.addc]; const g = +list.querySelector(`[data-c="${f.i}"]`).value || 0; addFoods([{ name: `${f.name} (${g} g)`, ...cfScale(f, g), source: 'common' }], state.meal, state.date); });
@@ -680,7 +700,13 @@ function foodPrompt(hint) {
     (hint.trim() ? `The user gave these measurements, which you should trust over visual estimates: "${hint.trim()}". ` : `No measurements were given, so estimate portions from visual cues such as plate and utensil size. `) +
     `Be realistic about hidden calories (oil, butter, sauces, dressings). In notes, say in one short sentence what most affects accuracy.`;
 }
-const estimateFood = (b64, hint) => S.settings.aiProvider === 'claude' ? estimateClaude(b64, hint) : estimateGemini(b64, hint);
+const estimateFood = (b64, hint, prompt) => S.settings.aiProvider === 'claude' ? estimateClaude(b64, hint, prompt) : estimateGemini(b64, hint, prompt);
+// Text-only lookup, e.g. a restaurant item not in the built-in list
+function lookupPrompt(q) {
+  return `Give the nutrition facts for: "${q}". If it is a menu item from a restaurant chain, use that chain's official published US nutrition information for its standard serving. ` +
+    `Otherwise use a typical serving. List it as one item (or one item per part if it is clearly several foods), with the serving in portion. ` +
+    `Set confidence to high only if you are confident these are the official published numbers. In notes, say in one short sentence where the numbers come from or what makes them uncertain.`;
+}
 
 // Google Gemini (free tier available at aistudio.google.com)
 // Free-tier models are often "overloaded" (503). We retry with backoff, then try other Flash models.
@@ -712,7 +738,7 @@ async function callGemini(model, b64, prompt, think = true) {
       method: 'POST', signal: ctrl.signal,
       headers: { 'content-type': 'application/json', 'x-goog-api-key': S.settings.geminiKey },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: prompt }] }],
+        contents: [{ role: 'user', parts: [...(b64 ? [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }] : []), { text: prompt }] }],
         generationConfig: { responseMimeType: 'application/json', ...(tc ? { thinkingConfig: tc } : {}) },
       }),
     }, 'Google Gemini');
@@ -726,8 +752,8 @@ async function callGemini(model, b64, prompt, think = true) {
     throw e;
   } finally { clearTimeout(timer); }
 }
-async function estimateGemini(b64, hint) {
-  const prompt = foodPrompt(hint) + ` Reply with JSON only, matching this shape: {"items":[{"name":string,"portion":string,"kcal":number,"protein_g":number,"carbs_g":number,"fat_g":number}],"total_kcal":number,"confidence":"low"|"medium"|"high","notes":string}`;
+async function estimateGemini(b64, hint, custom) {
+  const prompt = (custom || foodPrompt(hint)) + ` Reply with JSON only, matching this shape: {"items":[{"name":string,"portion":string,"kcal":number,"protein_g":number,"carbs_g":number,"fat_g":number}],"total_kcal":number,"confidence":"low"|"medium"|"high","notes":string}`;
   const busy = s => s === 500 || s === 503 || s === 504;
   let model = S.settings.geminiModel || 'gemini-3.1-flash-lite';
   const t0 = Date.now();
@@ -753,7 +779,7 @@ async function estimateGemini(b64, hint) {
     throw new Error(`AI request failed (${r.status}): ${r.msg}`);
   }
   const text = (r.data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
-  if (!text) throw new Error('Gemini returned no estimate for this photo. Try again or use Quick add.');
+  if (!text) throw new Error('Gemini returned no estimate. Try again or use Quick add.');
   const res = parseFoodJSON(text);
   res.via = `${modelName(r.model)} · ${Math.round((Date.now() - t0) / 1000)}s`;
   return res;
@@ -777,8 +803,8 @@ function parseFoodJSON(text) {
 }
 
 // Anthropic Claude (paid API)
-async function estimateClaude(b64, hint) {
-  const prompt = foodPrompt(hint);
+async function estimateClaude(b64, hint, custom) {
+  const prompt = custom || foodPrompt(hint);
   const model = S.settings.aiModel || 'claude-opus-5-5';
   const canFallback = !/haiku/.test(model); // server-side refusal fallback isn't offered for Haiku
   const t0 = Date.now();
@@ -798,7 +824,7 @@ async function estimateClaude(b64, hint) {
       ...(canFallback ? { fallbacks: 'default' } : {}),
       output_config: { effort: 'low', format: { type: 'json_schema', schema: FOOD_SCHEMA } },
       messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+        ...(b64 ? [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } }] : []),
         { type: 'text', text: prompt },
       ] }],
     }),
