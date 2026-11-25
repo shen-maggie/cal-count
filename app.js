@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '26';
+const APP_VERSION = '27';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -685,6 +685,13 @@ const estimateFood = (b64, hint) => S.settings.aiProvider === 'claude' ? estimat
 // Google Gemini (free tier available at aistudio.google.com)
 // Free-tier models are often "overloaded" (503). We retry with backoff, then try other Flash models.
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Friendly model names, e.g. claude-haiku-5-5 → Claude Haiku 5.5, gemini-3.1-flash-lite → Gemini 3.1 Flash Lite
+function modelName(id) {
+  id = String(id || '').replace(/^models\//, '').replace(/-\d{8}$/, '');
+  let m = id.match(/^claude-([a-z]+)-(\d+)(?:-(\d+))?$/);
+  if (m) return `Claude ${m[1][0].toUpperCase() + m[1].slice(1)} ${m[2]}${m[3] ? '.' + m[3] : ''}`;
+  return id.split('-').map(w => /^\d/.test(w) ? w : w[0].toUpperCase() + w.slice(1)).join(' ');
+}
 const aiStatus = msg => { const el = document.getElementById('aiStatus'); if (el) el.textContent = msg; };
 // fetch() that turns network failures ("Load failed" on iPhone) into a readable message
 async function apiFetch(url, opts, who) {
@@ -724,7 +731,7 @@ async function estimateGemini(b64, hint) {
   const busy = s => s === 500 || s === 503 || s === 504;
   let model = S.settings.geminiModel || 'gemini-3.1-flash-lite';
   const t0 = Date.now();
-  aiStatus(`Asking ${model}…`);
+  aiStatus(`Asking ${modelName(model)}…`);
   let r = await callGemini(model, b64, prompt);
   // Model retired: switch to a current Flash model for good.
   if (r.status === 404) {
@@ -734,7 +741,7 @@ async function estimateGemini(b64, hint) {
   // Busy or slow: try up to two other Flash models right away, then the original once more.
   if (busy(r.status)) {
     for (const alt of (await geminiModels()).filter(m => m !== model).slice(0, 2)) {
-      aiStatus(`${model} is busy. Trying ${alt}…`);
+      aiStatus(`${modelName(model)} is busy. Trying ${modelName(alt)}…`);
       r = await callGemini(alt, b64, prompt); if (!busy(r.status)) break;
     }
   }
@@ -748,7 +755,7 @@ async function estimateGemini(b64, hint) {
   const text = (r.data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
   if (!text) throw new Error('Gemini returned no estimate for this photo. Try again or use Quick add.');
   const res = parseFoodJSON(text);
-  res.via = `${r.model} · ${Math.round((Date.now() - t0) / 1000)}s`;
+  res.via = `${modelName(r.model)} · ${Math.round((Date.now() - t0) / 1000)}s`;
   return res;
 }
 // Current Flash models that accept images, lite first (they have the most generous free limits).
@@ -774,6 +781,8 @@ async function estimateClaude(b64, hint) {
   const prompt = foodPrompt(hint);
   const model = S.settings.aiModel || 'claude-opus-5-5';
   const canFallback = !/haiku/.test(model); // server-side refusal fallback isn't offered for Haiku
+  const t0 = Date.now();
+  aiStatus(`Asking ${modelName(model)}…`);
   const resp = await apiFetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -803,7 +812,9 @@ async function estimateClaude(b64, hint) {
   }
   if (data.stop_reason === 'refusal') throw new Error('The AI declined to estimate this photo. Try Quick add instead.');
   const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  return parseFoodJSON(text);
+  const res = parseFoodJSON(text);
+  res.via = `${modelName(data.model || model)} · ${Math.round((Date.now() - t0) / 1000)}s`; // data.model is the one that actually answered
+  return res;
 }
 
 function renderAIResult(out, res, state) {
@@ -813,7 +824,7 @@ function renderAIResult(out, res, state) {
       <h3 style="margin-top:14px">Estimate <span class="pill ${res.confidence === 'high' ? 'green' : res.confidence === 'low' ? 'amber' : ''}">${esc(res.confidence)} confidence</span></h3>
       ${items.map((it, n) => `<div class="ai-item"><div class="row"><input value="${esc(it.name)}" data-n="${n}" data-f="name" class="grow"><input type="number" inputmode="numeric" value="${Math.round(it.kcal)}" data-n="${n}" data-f="kcal" style="width:80px"><span class="small muted">kcal</span><button class="icon" data-del="${n}">✕</button></div>
         <div class="small muted" style="margin-top:4px">${esc(it.portion)} · P ${Math.round(it.protein_g)}g · C ${Math.round(it.carbs_g)}g · F ${Math.round(it.fat_g)}g</div></div>`).join('')}
-      <p class="small muted">${esc(res.notes)}${res.via ? ` <span style="opacity:.6">(${esc(res.via)})</span>` : ''}</p>
+      <p class="small muted">${esc(res.notes)}</p>${res.via ? `<p class="small muted" style="margin-top:-4px">✨ Estimated by ${esc(res.via)}</p>` : ''}
       <div class="row between"><b>Total</b><b id="aiTot">${sumKcal(items)} kcal</b></div>
       <button class="btn primary" id="aiLog" style="margin-top:10px">Log ${items.length} item${items.length === 1 ? '' : 's'}</button>`;
     out.querySelectorAll('input[data-n]').forEach(inp => inp.oninput = () => { const it = items[+inp.dataset.n]; it[inp.dataset.f] = inp.dataset.f === 'kcal' ? +inp.value : inp.value; document.getElementById('aiTot').textContent = sumKcal(items) + ' kcal'; });
