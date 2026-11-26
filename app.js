@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '29';
+const APP_VERSION = '30';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -148,6 +148,90 @@ function computeStreak(today = dayKey()) {
   return { streak, frozen, todayDone };
 }
 
+// ---------- Trophy case ----------
+function trophyStats() {
+  const done = S.fasts.filter(f => f.end), hrs = f => (f.end - f.start) / 3.6e6;
+  const completed = done.filter(f => hrs(f) >= f.goalH);
+  const longest = done.reduce((b, f) => !b || hrs(f) > hrs(b) ? f : b, null);
+  // Best streak ever: the streak as it stood on each goal day
+  let bestStreak = 0, bestStreakEnd = null;
+  for (const d of goalDays()) { const n = computeStreak(d).streak; if (n > bestStreak) { bestStreak = n; bestStreakEnd = d; } }
+  const totalHrs = done.reduce((a, f) => a + hrs(f), 0);
+  const weekHrs = {}; done.forEach(f => { const w = weekId(dayKey(f.end)); weekHrs[w] = (weekHrs[w] || 0) + hrs(f); });
+  const bestWeek = Object.entries(weekHrs).sort((a, b) => b[1] - a[1])[0];
+  const foodDays = [...new Set(S.foods.map(f => f.date))].sort();
+  // Longest run of logged days, and of days at or under the calorie goal (today only counts once it's over)
+  const run = days => { let best = 0, cur = 0, prev = null; for (const d of days) { cur = prev && addDays(prev, 1) === d ? cur + 1 : 1; best = Math.max(best, cur); prev = d; } return best; };
+  const underDays = foodDays.filter(d => d < dayKey() && sumKcal(foodsOn(d)) <= S.settings.calorieGoal);
+  const ws = [...S.weights].sort((a, b) => a.date.localeCompare(b.date));
+  const peak = ws.reduce((m, w) => Math.max(m, w.value), -Infinity), latest = ws.length ? ws[ws.length - 1].value : null;
+  const lowest = ws.reduce((b, w) => !b || w.value < b.value ? w : b, null);
+  return {
+    longest, longestH: longest ? hrs(longest) : 0, bestStreak, bestStreakEnd, current: computeStreak().streak,
+    completed: completed.length, totalHrs, bestWeek, loggedRun: run(foodDays), daysLogged: foodDays.length,
+    underRun: run(underDays), lost: ws.length > 1 ? Math.max(0, peak - latest) : 0, lowest, weighIns: ws.length,
+  };
+}
+function trophyList(t) {
+  const u = S.settings.weightUnit, kg = u === 'kg';
+  const tier = (id, icon, name, desc, val, goal, fmt = v => Math.floor(v)) => ({ id, icon, name, desc, earned: val >= goal, prog: Math.min(1, goal ? val / goal : 0), progLabel: `${fmt(Math.min(val, goal))} / ${fmt(goal)}` });
+  return [
+    tier('fast1', '🌱', 'First fast', 'Complete your first fast', t.completed, 1),
+    tier('h16', '⏱️', '16-hour club', 'Fast for 16 hours', t.longestH, 16, v => `${Math.floor(v)}h`),
+    tier('h18', '🌙', 'Night owl', 'Fast for 18 hours', t.longestH, 18, v => `${Math.floor(v)}h`),
+    tier('h20', '🔥', 'Warrior', 'Fast for 20 hours', t.longestH, 20, v => `${Math.floor(v)}h`),
+    tier('h24', '🌕', 'Full day', 'Fast for 24 hours', t.longestH, 24, v => `${Math.floor(v)}h`),
+    tier('s3', '✨', 'Warming up', '3-day fasting streak', t.bestStreak, 3),
+    tier('s7', '🗓️', 'One full week', '7-day fasting streak', t.bestStreak, 7),
+    tier('s14', '💪', 'Two weeks strong', '14-day fasting streak', t.bestStreak, 14),
+    tier('s30', '🏅', 'Month of focus', '30-day fasting streak', t.bestStreak, 30),
+    tier('s100', '👑', 'Centurion', '100-day fasting streak', t.bestStreak, 100),
+    tier('f10', '🍃', 'Getting the hang of it', 'Complete 10 fasts', t.completed, 10),
+    tier('f50', '🌳', 'Seasoned faster', 'Complete 50 fasts', t.completed, 50),
+    tier('f100', '🏆', 'Hundred fasts', 'Complete 100 fasts', t.completed, 100),
+    tier('t500', '⌛', '500 hours', 'Fast for 500 hours in total', t.totalHrs, 500, v => `${Math.floor(v)}h`),
+    tier('t1000', '⏳', '1,000 hours', 'Fast for 1,000 hours in total', t.totalHrs, 1000, v => `${Math.floor(v).toLocaleString()}h`),
+    tier('log7', '📒', 'Diligent logger', 'Log food 7 days in a row', t.loggedRun, 7),
+    tier('log30', '📚', 'Habit formed', 'Log food 30 days in a row', t.loggedRun, 30),
+    tier('under7', '🎯', 'On target', 'Stay within your calorie goal 7 days in a row', t.underRun, 7),
+    tier('weigh10', '⚖️', 'Checking in', 'Log 10 weigh-ins', t.weighIns, 10),
+    tier('lost5', '🍓', kg ? 'First 2.5 kg' : 'First 5 lb', `Lose ${kg ? '2.5 kg' : '5 lb'} from your highest weigh-in`, t.lost, kg ? 2.5 : 5, v => `${(Math.round(v * 10) / 10)} ${u}`),
+    tier('lost10', '🍰', kg ? '5 kg down' : '10 lb down', `Lose ${kg ? '5 kg' : '10 lb'} from your highest weigh-in`, t.lost, kg ? 5 : 10, v => `${(Math.round(v * 10) / 10)} ${u}`),
+  ];
+}
+// Toast once when a new trophy is earned (skips the first check so existing ones don't all pop at once)
+let trophyCheckedAt = null;
+function checkTrophies() {
+  const stamp = S.meta.updatedAt || 0; if (stamp === trophyCheckedAt) return; trophyCheckedAt = stamp;
+  const earned = trophyList(trophyStats()).filter(x => x.earned).map(x => x.id);
+  const seen = S.meta.trophies;
+  if (!Array.isArray(seen)) { S.meta.trophies = earned; localStorage.setItem(STORE_KEY, JSON.stringify(S)); return; }
+  const fresh = earned.filter(id => !seen.includes(id));
+  if (fresh.length) {
+    S.meta.trophies = [...seen, ...fresh]; localStorage.setItem(STORE_KEY, JSON.stringify(S));
+    const t = trophyList(trophyStats()).find(x => x.id === fresh[fresh.length - 1]);
+    setTimeout(() => toast(`🏆 New trophy: ${t.icon} ${t.name}${fresh.length > 1 ? ` and ${fresh.length - 1} more` : ''}`), 900);
+  }
+}
+function openTrophies() {
+  const t = trophyStats(), list = trophyList(t), got = list.filter(x => x.earned).length, u = S.settings.weightUnit;
+  const rec = (icon, label, value, sub) => `<div class="rec"><div class="rec-ico">${icon}</div><div class="small muted">${label}</div><div class="rec-val">${value}</div><div class="small muted">${sub || '&nbsp;'}</div></div>`;
+  openSheet(`<div class="row between"><h2>🏆 Trophy case</h2><button class="icon" id="x">✕</button></div>
+    <h3 style="margin:4px 0 8px">Personal records</h3>
+    <div class="recs">
+      ${rec('⏱️', 'Longest fast', t.longest ? fmtDur(t.longest.end - t.longest.start, false) : '—', t.longest ? `${fmtDay(dayKey(t.longest.end))}` : 'No fasts yet')}
+      ${rec('🔥', 'Longest streak', `${t.bestStreak} day${t.bestStreak === 1 ? '' : 's'}`, t.bestStreakEnd ? `ended ${fmtDay(t.bestStreakEnd)}${t.current && t.current === t.bestStreak ? ' · current!' : ''}` : '')}
+      ${rec('✅', 'Fasts completed', t.completed, `${Math.round(t.totalHrs).toLocaleString()} hours fasted`)}
+      ${rec('📅', 'Best fasting week', t.bestWeek ? `${Math.round(t.bestWeek[1])}h` : '—', t.bestWeek ? `week of ${fmtDay(t.bestWeek[0])}` : '')}
+      ${rec('📒', 'Longest logging run', `${t.loggedRun} day${t.loggedRun === 1 ? '' : 's'}`, `${t.daysLogged} days logged in all`)}
+      ${rec('⚖️', 'Lowest weigh-in', t.lowest ? `${t.lowest.value} ${u}` : '—', t.lowest ? fmtDay(t.lowest.date) : '')}
+    </div>
+    <h3 style="margin:16px 0 8px">Badges <span class="small muted">${got} of ${list.length}</span></h3>
+    <div class="badges">${list.map(x => `<div class="badge ${x.earned ? 'got' : ''}"><div class="b-ico">${x.icon}</div><div class="b-name">${esc(x.name)}</div><div class="small muted">${esc(x.desc)}</div>
+      ${x.earned ? '' : `<div class="bar" style="height:6px;margin-top:6px"><div style="width:${Math.round(x.prog * 100)}%"></div></div><div class="small muted" style="margin-top:2px">${x.progLabel}</div>`}</div>`).join('')}</div>`);
+  document.getElementById('x').onclick = closeSheet;
+}
+
 // ---------- Food logic ----------
 const enabledMeals = () => MEALS.filter(m => S.settings.meals[m.id]);
 const foodsOn = key => S.foods.filter(f => f.date === key);
@@ -263,6 +347,7 @@ document.querySelectorAll('.tabbar button').forEach(b => b.onclick = () => { tab
 
 function render() {
   applyAutoGoal();
+  checkTrophies();
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   const titles = { home: activeFast() ? 'Fasting' : 'Eating window', food: 'Food log', weight: 'Weight', library: 'Ingredients & recipes', settings: 'Settings' };
   document.getElementById('pageTitle').textContent = tab === 'settings' && settingsSec ? SETTINGS_SECS[settingsSec].label : titles[tab];
@@ -337,7 +422,7 @@ function renderHome() {
         <button class="link" id="logDuringFast" style="margin-top:10px">+ Log food</button>
       </div>
       <div class="card small muted">Today: ${todayK} / ${st.calorieGoal} kcal${(() => { const p = currentPlan(); return p ? ` · Next meal planned ${fmtTime(p.end)} ${dayLabelFor(p.end)}` : ''; })()}</div>
-      <div class="center"><button class="link" id="recapBtn">📊 Weekly recap</button></div>`;
+      <div class="center"><button class="link" id="recapBtn">📊 Weekly recap</button><br><button class="link" id="trophyBtn">🏆 Trophy case</button></div>`;
     const tick = () => {
       const el = document.getElementById('tElapsed'); if (!el) return;
       const e = Date.now() - f.start; el.textContent = fmtDur(e);
@@ -353,6 +438,7 @@ function renderHome() {
     document.getElementById('editStart').onclick = () => editTimeSheet('Fast start time', f.start, t => { f.start = Math.min(t, Date.now()); save(); render(); });
     document.getElementById('logDuringFast').onclick = () => openLogSheet(guessMeal());
     document.getElementById('recapBtn').onclick = () => openRecap(weekId(dayKey()));
+    document.getElementById('trophyBtn').onclick = openTrophies;
   } else {
     const last = lastFinishedFast();
     const pct = Math.min(1, todayK / st.calorieGoal);
@@ -381,7 +467,7 @@ function renderHome() {
           <button class="btn" id="quickBtn">⚡ Quick add</button><button class="btn" id="mineBtn">📖 My foods</button></div>
       </div>
       <button class="btn primary" id="startFast">🌙 Start ${st.fastHours}h fast</button>
-      <div class="center" style="margin-top:6px"><button class="link" id="startEarlier">Started earlier?</button> · <button class="link" id="recapBtn">Weekly recap</button></div>`;
+      <div class="center" style="margin-top:6px"><button class="link" id="startEarlier">Started earlier?</button> · <button class="link" id="recapBtn">Weekly recap</button><br><button class="link" id="trophyBtn">🏆 Trophy case</button></div>`;
     if (last) { const tick = () => { const el = document.getElementById('tSince'); if (el) el.textContent = fmtDur(Date.now() - last.end, false); }; tick(); setTick(tick); } else setTick(null);
     view.querySelectorAll('.meal-btn').forEach(b => b.onclick = () => openLogSheet(b.dataset.meal, 'library'));
     document.getElementById('mineBtn').onclick = () => openLogSheet(guessMeal(), 'library');
@@ -390,6 +476,7 @@ function renderHome() {
     document.getElementById('scanBtn').onclick = () => openLogSheet(guessMeal(), 'scan');
     document.getElementById('startFast').onclick = () => startFast();
     document.getElementById('recapBtn').onclick = () => openRecap(weekId(dayKey()));
+    document.getElementById('trophyBtn').onclick = openTrophies;
     document.getElementById('startEarlier').onclick = () => editTimeSheet('When did your fast start?', Date.now(), t => startFast(Math.min(t, Date.now())));
   }
 }

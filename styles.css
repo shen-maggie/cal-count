@@ -218,3 +218,17 @@ input::-webkit-date-and-time-value { text-align: left; }
 .bar > div.m-protein { background: var(--ring1); }
 .bar > div.m-carbs { background: var(--ring2); }
 .bar > div.m-fat { background: var(--ring3); }
+
+/* Trophy case */
+.recs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rec { background: #f8eedd; border: 1.5px solid var(--ink); border-radius: 14px; padding: 10px 12px; }
+.rec-ico { font-size: 20px; }
+.rec-val { font-family: var(--font-display); font-size: 22px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.badges { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.badge { text-align: center; border: 1.5px dashed var(--line-soft); border-radius: 14px; padding: 10px 6px; }
+.badge .b-ico { font-size: 28px; filter: grayscale(1); opacity: .45; }
+.badge .b-name { font-family: var(--font-display); font-weight: 600; font-size: 14px; line-height: 1.2; margin: 4px 0 2px; color: var(--muted); }
+.badge .small { font-size: 11.5px; line-height: 1.3; }
+.badge.got { border: 1.5px solid var(--ink); background: var(--berry-soft); box-shadow: 2px 2px 0 var(--ink); }
+.badge.got .b-ico { filter: none; opacity: 1; }
+.badge.got .b-name { color: var(--text); }
