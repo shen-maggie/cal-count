@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '28';
+const APP_VERSION = '29';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -28,10 +28,14 @@ const DEFAULT_STATE = {
     heightCm: null,
     activity: 1.2,              // activity multiplier, same levels as calculator.net
     goalRate: -1,               // weight change per week, in the weight unit (lb or kg); negative = lose
-    autoGoal: false,            // keep the daily goal in sync with the calculator as weight changes
+    autoGoal: false,
+    trackMacros: false,         // show protein / carbs / fat
+    macroGoalsOn: false,
+    macroGoals: { protein: 0, carbs: 0, fat: 0 }, // grams a day            // keep the daily goal in sync with the calculator as weight changes
     theme: 'cocoa',             // cocoa | auto | spring | summer | autumn | winter
     aiProvider: 'gemini',       // 'gemini' (free tier) or 'claude' (paid API)
     geminiKey: '',
+    usdaKey: '',                // optional free api.data.gov key for USDA search (DEMO_KEY otherwise)
     geminiModel: 'gemini-3.1-flash-lite',
     apiKey: '',                 // Anthropic key
     aiModel: 'claude-opus-5-5',
@@ -184,6 +188,7 @@ function dayLabelFor(t) { const k = dayKey(t); return k === dayKey() ? 'today' :
 
 // ---------- Recipes ----------
 const ingById = id => S.ingredients.find(i => i.id === id);
+function ingMacros(ing, qty) { const f = (+qty || 0) / (+ing.unitSize || 1); return ing.p != null ? { protein: ing.p * f, carbs: (ing.c || 0) * f, fat: (ing.f || 0) * f } : {}; }
 function ingKcal(ing, qty) { return ing ? (+qty || 0) / (+ing.unitSize || 1) * (+ing.kcalPerUnit || 0) : 0; }
 function recipeKcal(r) { return r.items.reduce((a, it) => a + ingKcal(ingById(it.ingId), it.qty), 0); }
 const recipePerServing = r => recipeKcal(r) / (+r.servings || 1);
@@ -366,6 +371,7 @@ function renderHome() {
           <div class="ring-center"><div class="big-num">${Math.abs(st.calorieGoal - todayK).toLocaleString()}</div>
             <div class="ring-label">kcal ${over ? 'over' : 'left'}</div>
             <div class="small muted" style="margin-top:4px">${todayK.toLocaleString()} of ${st.calorieGoal.toLocaleString()} eaten</div></div></div>
+        ${macroBarsHTML(dayKey())}
         <div style="text-align:left">${weekBudgetHTML()}</div>
       </div>
       <div class="card">
@@ -605,8 +611,10 @@ function drawLibraryPick(el, state) {
     const commons = searchCommon(q).map(f => `<li><span class="name">${esc(f.name)}<br><span class="small muted">${f.kcal} kcal/100 g · ${esc(f.srvLabel)} = ${f.srvG} g (${Math.round(f.kcal * f.srvG / 100)})</span></span><input type="number" inputmode="decimal" value="${f.srvG}" style="width:70px" data-c="${f.i}"><span class="small muted">g</span><button class="btn small primary" data-addc="${f.i}">Add</button></li>`);
     const rests = searchRestaurants(q).map(r => `<li><span class="name">🍔 ${esc(r.item)}<br><span class="small muted">${esc(r.chain)} · ${r.kcal} kcal / ${esc(r.srv)}</span></span><input type="number" inputmode="decimal" value="1" step="0.5" style="width:60px" data-rq="${r.i}"><span class="small muted">×</span><button class="btn small primary" data-addrf="${r.i}">Add</button></li>`);
     const chips = !q ? `<li style="display:block;border:0"><div class="small muted" style="margin-bottom:6px">Restaurants</div><div class="chips">${RF_CHAINS.map(c => `<button class="chip" data-chain="${esc(c)}">${esc(c)}</button>`).join('')}</div></li>` : '';
+    const usda = q ? `<li style="display:block;border:0;padding-top:12px"><button class="btn" id="usdaBtn">🔎 Search USDA for “${esc(q)}”</button><ul class="list" id="usdaOut"></ul></li>` : '';
     const ask = q && aiKey() ? `<li style="display:block;border:0;padding-top:12px"><button class="btn blue" id="askAI">✨ Look up “${esc(q)}” with AI</button><div id="askOut"></div></li>` : '';
-    list.innerHTML = (recs.concat(ings, rests, commons).join('') || `<li class="muted">${q ? `No matches.${aiKey() ? ' Try the AI lookup below, or Quick add.' : ' Try Quick add, or add an AI key in Settings to look up any food.'}` : 'Type to search your foods, restaurant menus and common foods.'}</li>`) + chips + ask;
+    list.innerHTML = (recs.concat(ings, rests, commons).join('') || `<li class="muted">${q ? `No matches in your foods.${aiKey() ? ' Try the AI lookup below, or Quick add.' : ' Try Quick add, or add an AI key in Settings to look up any food.'}` : 'Type to search your foods, restaurant menus and common foods.'}</li>`) + chips + usda + ask;
+    if (usda) document.getElementById('usdaBtn').onclick = () => showUsdaResults(document.getElementById('usdaOut'), q, state);
     list.querySelectorAll('[data-chain]').forEach(b => b.onclick = () => { const inp = document.getElementById('libSearch'); inp.value = b.dataset.chain; draw(inp.value); });
     list.querySelectorAll('[data-addrf]').forEach(b => b.onclick = () => { const r = RF[+b.dataset.addrf]; const n = +list.querySelector(`[data-rq="${r.i}"]`).value || 1; addFoods([{ name: `${r.chain} ${r.item}${n !== 1 ? ` (×${n})` : ''}`, kcal: r.kcal * n, protein: r.p * n, carbs: r.c * n, fat: r.f * n, source: 'restaurant' }], state.meal, state.date); });
     if (ask) document.getElementById('askAI').onclick = async e => {
@@ -617,11 +625,65 @@ function drawLibraryPick(el, state) {
       e.target.disabled = false;
     };
     list.querySelectorAll('[data-addr]').forEach(b => b.onclick = () => { const r = S.recipes.find(x => x.id === b.dataset.addr); const srv = +list.querySelector(`[data-r="${r.id}"]`).value || 1; addFoods([{ name: `${r.name} (${srv} srv)`, kcal: recipePerServing(r) * srv, source: 'recipe' }], state.meal, state.date); });
-    list.querySelectorAll('[data-addi]').forEach(b => b.onclick = () => { const i = ingById(b.dataset.addi); const q = +list.querySelector(`[data-i="${i.id}"]`).value || 0; addFoods([{ name: `${i.name} (${q} ${i.unit})`, kcal: ingKcal(i, q), source: 'ingredient' }], state.meal, state.date); });
+    list.querySelectorAll('[data-addi]').forEach(b => b.onclick = () => { const i = ingById(b.dataset.addi); const q = +list.querySelector(`[data-i="${i.id}"]`).value || 0; addFoods([{ name: `${i.name} (${q} ${i.unit})`, kcal: ingKcal(i, q), ...ingMacros(i, q), source: 'ingredient' }], state.meal, state.date); });
     list.querySelectorAll('[data-addc]').forEach(b => b.onclick = () => { const f = CF[+b.dataset.addc]; const g = +list.querySelector(`[data-c="${f.i}"]`).value || 0; addFoods([{ name: `${f.name} (${g} g)`, ...cfScale(f, g), source: 'common' }], state.meal, state.date); });
   };
   draw(''); document.getElementById('libSearch').oninput = e => draw(e.target.value);
   if (!S.recipes.length && !S.ingredients.some(i => !i.common)) setTimeout(() => document.getElementById('libSearch')?.focus(), 50);
+}
+
+// ---------- USDA FoodData Central search (free; uses DEMO_KEY unless you add your own key) ----------
+async function usdaSearch(q) {
+  const key = S.settings.usdaKey || 'DEMO_KEY';
+  const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(key)}&query=${encodeURIComponent(q)}&dataType=${encodeURIComponent('Foundation,SR Legacy')}&pageSize=25`;
+  const r = await apiFetch(url, {}, 'the USDA database');
+  if (r.status === 429) throw new Error(S.settings.usdaKey ? 'USDA search limit reached. Try again in a bit.' : 'The shared USDA key hit its hourly limit. Add your own free key in Settings → AI & food data, or try again later.');
+  if (r.status === 403) throw new Error('Your USDA API key was rejected. Check it in Settings → AI & food data.');
+  if (!r.ok) throw new Error(`USDA search failed (${r.status})`);
+  const j = await r.json();
+  const get = (f, ids) => { for (const id of ids) { const n = (f.foodNutrients || []).find(x => x.nutrientId === id); if (n && n.value != null) return n.value; } return null; };
+  return (j.foods || []).map(f => {
+    let kcal = get(f, [1008, 2048, 2047]);
+    if (kcal == null) { const kj = get(f, [1062]); kcal = kj != null ? kj / 4.184 : null; }
+    return { fdcId: f.fdcId, name: usdaName(f.description), kcal, p: get(f, [1003]), c: get(f, [1005, 1050]), f: get(f, [1004, 1085]) };
+  }).filter(x => x.kcal != null);
+}
+// "Chicken, broilers or fryers, breast, meat only, cooked, roasted" → "Chicken breast, meat only, cooked, roasted"
+function usdaName(d) {
+  d = String(d || '').replace(/, (broilers or fryers|raw or cooked|NFS)/gi, '').replace(/\s+/g, ' ').trim();
+  return d.charAt(0) + d.slice(1).toLowerCase();
+}
+function saveUsdaIngredient(x) {
+  let ing = S.ingredients.find(i => i.fdcId === x.fdcId);
+  if (!ing) { ing = { id: uid(), name: x.name, unit: 'g', unitSize: 100, kcalPerUnit: Math.round(x.kcal), p: x.p, c: x.c, f: x.f, fdcId: x.fdcId }; S.ingredients.push(ing); save(); }
+  return ing;
+}
+// state: log into a meal; without it, results just get saved to Ingredients
+async function showUsdaResults(out, q, state) {
+  out.innerHTML = '<li style="display:block;border:0"><div class="spinner"></div></li>';
+  try {
+    const rows = await usdaSearch(q);
+    if (!rows.length) { out.innerHTML = '<li class="muted">No USDA matches. Try fewer or simpler words, like "salmon" or "brown rice".</li>'; return; }
+    out.innerHTML = rows.map((x, n) => `<li><span class="name">🇺🇸 ${esc(x.name)}<br><span class="small muted">${Math.round(x.kcal)} kcal/100 g${x.p != null ? ` · P ${Math.round(x.p)} C ${Math.round(x.c || 0)} F ${Math.round(x.f || 0)}` : ''}</span></span>
+      ${state ? `<input type="number" inputmode="decimal" value="100" style="width:70px" data-ug="${n}"><span class="small muted">g</span><button class="btn small primary" data-ua="${n}">Add</button>` : `<button class="btn small ${S.ingredients.some(i => i.fdcId === x.fdcId) ? '' : 'primary'}" data-us="${n}">${S.ingredients.some(i => i.fdcId === x.fdcId) ? 'Saved' : 'Save'}</button>`}</li>`).join('')
+      + '<li class="small muted" style="border:0">From USDA FoodData Central. Anything you log or save is kept in Ingredients.</li>';
+    out.querySelectorAll('[data-ua]').forEach(b => b.onclick = () => {
+      const x = rows[+b.dataset.ua], g = +out.querySelector(`[data-ug="${b.dataset.ua}"]`).value || 0, ing = saveUsdaIngredient(x);
+      addFoods([{ name: `${ing.name} (${g} g)`, kcal: ingKcal(ing, g), ...ingMacros(ing, g), source: 'usda' }], state.meal, state.date);
+    });
+    out.querySelectorAll('[data-us]').forEach(b => b.onclick = () => { saveUsdaIngredient(rows[+b.dataset.us]); b.textContent = 'Saved'; b.classList.remove('primary'); toast('Saved to Ingredients'); });
+  } catch (e) { out.innerHTML = `<li style="display:block;border:0"><div class="warnbox">${esc(e.message)}</div></li>`; }
+}
+function openUsdaSheet() {
+  openSheet(`<div class="row between"><h2>Add from USDA</h2><button class="icon" id="x">✕</button></div>
+    <p class="small muted" style="margin-top:0">Search the USDA's food database and save ingredients with their calories and macros per 100 g.</p>
+    <div class="row"><input id="usQ" placeholder="e.g. salmon, bok choy, tofu" class="grow" autocomplete="off"><button class="btn small primary" id="usGo">Search</button></div>
+    <ul class="list" id="usOut"></ul>`);
+  const go = () => { const q = document.getElementById('usQ').value.trim(); if (q) showUsdaResults(document.getElementById('usOut'), q, null); };
+  document.getElementById('x').onclick = () => { closeSheet(); render(); };
+  document.getElementById('usGo').onclick = go;
+  document.getElementById('usQ').onkeydown = e => { if (e.key === 'Enter') go(); };
+  setTimeout(() => document.getElementById('usQ')?.focus(), 50);
 }
 
 // ---------- AI photo estimation (Gemini or Claude API, called directly from the browser) ----------
@@ -629,43 +691,59 @@ const aiKey = () => S.settings.aiProvider === 'claude' ? S.settings.apiKey : S.s
 function drawPhoto(el, state) {
   if (!aiKey()) {
     el.innerHTML = `<p class="muted">To use AI photo estimates, add a ${S.settings.aiProvider === 'claude' ? 'Anthropic' : 'free Google Gemini'} API key in Settings. It stays on this device only.</p><button class="btn" id="goSet">Open Settings</button>`;
-    document.getElementById('goSet').onclick = () => { closeSheet(); tab = 'settings'; render(); };
+    document.getElementById('goSet').onclick = () => { closeSheet(); tab = 'settings'; settingsSec = 'ai'; render(); };
     return;
   }
+  const MAX = { before: 4, after: 3 };
+  const P = state.photos ||= { before: [], after: [], leftovers: false };
   el.innerHTML = `
-    <div class="btn-grid"><button class="btn blue" id="camBtn">📷 Take photo</button><button class="btn blue" id="libBtn">🖼 Choose photo</button></div>
+    <p class="small muted" style="margin:0 0 8px">Snap your meal, or a <b>nutrition label</b> to log it exactly. Add a few angles for a better estimate.</p>
+    <div id="phBefore"></div>
+    <div class="switch"><span>I didn't finish it<br><span class="small muted">Add an "after" photo of the leftovers</span></span><input type="checkbox" id="phLeft" ${P.leftovers ? 'checked' : ''}></div>
+    <div id="phAfter" class="${P.leftovers ? '' : 'hidden'}"></div>
     <input type="file" accept="image/*" capture="environment" id="camIn" class="visually-hidden">
-    <input type="file" accept="image/*" id="photoIn" class="visually-hidden">
-    <img id="prev" class="preview-img hidden" alt="">
-    <label>Size / weight hints (optional, improves accuracy)</label>
-    <textarea id="hint" rows="2" placeholder="e.g. plate is 10 in wide; chicken ~150 g; 1 cup rice"></textarea>
-    <button class="btn primary" id="estBtn" style="margin-top:12px" disabled>Estimate calories</button>
+    <input type="file" accept="image/*" multiple id="photoIn" class="visually-hidden">
+    <label>Notes (optional, improves accuracy)</label>
+    <textarea id="hint" rows="2" placeholder="e.g. plate is 10 in wide; chicken ~150 g; ate 2 servings">${esc(P.hint || '')}</textarea>
+    <button class="btn primary" id="estBtn" style="margin-top:12px">Estimate calories</button>
     <div id="aiOut"></div>`;
-  let imgData = null;
-  document.getElementById('camBtn').onclick = () => document.getElementById('camIn').click();
-  document.getElementById('libBtn').onclick = () => document.getElementById('photoIn').click();
+  let target = 'before';
+  const drawSet = which => {
+    const box = document.getElementById(which === 'before' ? 'phBefore' : 'phAfter'), list = P[which];
+    box.innerHTML = `${which === 'after' ? '<label style="margin-top:4px">After (leftovers)</label>' : P.leftovers ? '<label style="margin-top:0">Before</label>' : ''}
+      ${list.length ? `<div class="thumbs">${list.map((d, n) => `<div class="thumb"><img src="data:image/jpeg;base64,${d}" alt=""><button data-rm="${which}:${n}" aria-label="Remove">✕</button></div>`).join('')}</div>` : ''}
+      ${list.length < MAX[which] ? `<div class="btn-grid" style="margin-top:${list.length ? 8 : 0}px"><button class="btn blue" data-cam="${which}">📷 ${list.length ? 'Add angle' : 'Take photo'}</button><button class="btn blue" data-lib="${which}">🖼 Choose${list.length ? ' more' : ' photos'}</button></div>` : `<p class="small muted">That's the most photos for one estimate.</p>`}`;
+    box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { const [w, n] = b.dataset.rm.split(':'); P[w].splice(+n, 1); drawSet(w); upd(); });
+    box.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => { target = which; document.getElementById('camIn').click(); });
+    box.querySelectorAll('[data-lib]').forEach(b => b.onclick = () => { target = which; document.getElementById('photoIn').click(); });
+  };
+  const upd = () => { document.getElementById('estBtn').disabled = !P.before.length || (P.leftovers && !P.after.length); };
   const onPick = async e => {
-    const file = e.target.files[0]; if (!file) return;
+    const files = [...e.target.files]; e.target.value = ''; if (!files.length) return;
     const out = document.getElementById('aiOut'); out.innerHTML = '';
-    try {
-      imgData = await resizeImage(file, 1024);
-      const p = document.getElementById('prev'); p.src = 'data:image/jpeg;base64,' + imgData; p.classList.remove('hidden');
-      document.getElementById('estBtn').disabled = false;
-    } catch (err) { out.innerHTML = `<div class="warnbox">${esc(err.message)}</div>`; }
-    e.target.value = '';
+    for (const f of files.slice(0, MAX[target] - P[target].length)) {
+      try { P[target].push(await resizeImage(f, 1024)); } catch (err) { out.innerHTML = `<div class="warnbox">${esc(err.message)}</div>`; }
+    }
+    if (files.length > MAX[target]) toast(`Kept the first ${MAX[target]} photos`);
+    drawSet(target); upd();
   };
   document.getElementById('camIn').onchange = onPick;
   document.getElementById('photoIn').onchange = onPick;
+  document.getElementById('hint').oninput = e => P.hint = e.target.value;
+  document.getElementById('phLeft').onchange = e => { P.leftovers = e.target.checked; document.getElementById('phAfter').classList.toggle('hidden', !P.leftovers); drawSet('before'); drawSet('after'); upd(); };
+  drawSet('before'); drawSet('after'); upd();
   document.getElementById('estBtn').onclick = async () => {
     const out = document.getElementById('aiOut');
     out.innerHTML = '<div class="spinner"></div><p class="center small muted" id="aiStatus">Estimating…</p>';
     document.getElementById('estBtn').disabled = true;
+    const aft = P.leftovers ? P.after : [];
+    const imgs = [...P.before.map((d, n) => ({ data: d, label: aft.length ? `BEFORE photo ${n + 1}:` : `Photo ${n + 1}:` })), ...aft.map((d, n) => ({ data: d, label: `AFTER photo ${n + 1} (leftovers):` }))];
     try {
-      const res = await estimateFood(imgData, document.getElementById('hint').value);
+      const res = await estimateFood(imgs, P.hint || '', foodPrompt(P.hint || '', P.before.length, aft.length));
       renderAIResult(out, res, state);
     } catch (err) {
       out.innerHTML = `<div class="warnbox">${esc(err.message)}</div>`;
-    } finally { const b = document.getElementById('estBtn'); if (b) b.disabled = false; }
+    } finally { upd(); }
   };
 }
 
@@ -695,10 +773,13 @@ const FOOD_SCHEMA = {
   },
 };
 
-function foodPrompt(hint) {
-  return `Identify each food in this photo and estimate its portion size and nutrition. ` +
-    (hint.trim() ? `The user gave these measurements, which you should trust over visual estimates: "${hint.trim()}". ` : `No measurements were given, so estimate portions from visual cues such as plate and utensil size. `) +
-    `Be realistic about hidden calories (oil, butter, sauces, dressings). In notes, say in one short sentence what most affects accuracy.`;
+function foodPrompt(hint, nBefore = 1, nAfter = 0) {
+  const many = nBefore > 1 ? `You get ${nBefore} photos of the same meal from different angles. Combine them into one estimate and don't count anything twice. ` : '';
+  const after = nAfter ? `The photos labeled BEFORE show the meal before eating, and the ${nAfter > 1 ? 'photos' : 'photo'} labeled AFTER show the leftovers. Estimate only what was actually eaten (before minus leftovers): portions, kcal and macros are for the eaten amount, and each portion says roughly what fraction was eaten. ` : '';
+  return `Identify each food in ${nBefore + nAfter > 1 ? 'these photos' : 'this photo'} and estimate its portion size and nutrition. ` + many + after +
+    `If a photo shows a Nutrition Facts label or a package's nutrition panel, read the numbers from the label exactly instead of estimating: use the product name if visible, log one serving as printed unless the user's notes say how much was eaten (for example "2 servings", "half the bag" or "40 g"), put the serving size in portion, and set confidence to high when the label is legible. ` +
+    (hint.trim() ? `The user gave these notes, which you should trust over visual estimates: "${hint.trim()}". ` : `No measurements were given, so estimate portions from visual cues such as plate and utensil size. `) +
+    `Be realistic about hidden calories (oil, butter, sauces, dressings). In notes, say in one short sentence what most affects accuracy, or that the numbers came from a label.`;
 }
 const estimateFood = (b64, hint, prompt) => S.settings.aiProvider === 'claude' ? estimateClaude(b64, hint, prompt) : estimateGemini(b64, hint, prompt);
 // Text-only lookup, e.g. a restaurant item not in the built-in list
@@ -738,7 +819,7 @@ async function callGemini(model, b64, prompt, think = true) {
       method: 'POST', signal: ctrl.signal,
       headers: { 'content-type': 'application/json', 'x-goog-api-key': S.settings.geminiKey },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [...(b64 ? [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }] : []), { text: prompt }] }],
+        contents: [{ role: 'user', parts: [...(b64 || []).flatMap(im => [{ text: im.label }, { inline_data: { mime_type: 'image/jpeg', data: im.data } }]), { text: prompt }] }],
         generationConfig: { responseMimeType: 'application/json', ...(tc ? { thinkingConfig: tc } : {}) },
       }),
     }, 'Google Gemini');
@@ -824,7 +905,7 @@ async function estimateClaude(b64, hint, custom) {
       ...(canFallback ? { fallbacks: 'default' } : {}),
       output_config: { effort: 'low', format: { type: 'json_schema', schema: FOOD_SCHEMA } },
       messages: [{ role: 'user', content: [
-        ...(b64 ? [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } }] : []),
+        ...(b64 || []).flatMap(im => [{ type: 'text', text: im.label }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: im.data } }]),
         { type: 'text', text: prompt },
       ] }],
     }),
@@ -871,7 +952,7 @@ function renderFood() {
     <div class="card"><div class="row between"><button class="icon" id="prevDay">‹</button><b>${foodDay === dayKey() ? 'Today' : fmtDay(foodDay)}</b><button class="icon" id="nextDay" ${foodDay >= dayKey() ? 'disabled style="opacity:.3"' : ''}>›</button></div>
       <div class="row between" style="margin-top:8px"><span class="big-num">${total}</span><span class="muted small">Goal ${goal} · ${goal - total >= 0 ? goal - total + ' left' : total - goal + ' over'}</span></div>
       <div class="bar ${total > goal ? 'over' : ''}" style="margin-top:8px"><div style="width:${Math.min(100, total / goal * 100)}%"></div></div>
-      <div class="small muted" style="margin-top:8px">Protein ${macros[0]}g · Carbs ${macros[1]}g · Fat ${macros[2]}g</div>
+      ${S.settings.trackMacros ? macroBarsHTML(foodDay) : ''}
       ${weekBudgetHTML(foodDay)}</div>
     ${meals.map(m => { const mi = items.filter(f => f.meal === m.id); return `
       <div class="card"><div class="row between"><h3>${m.label}</h3><span class="muted">${sumKcal(mi)} kcal</span></div>
@@ -1016,9 +1097,10 @@ function renderLibrary() {
   view.querySelectorAll('[data-lm]').forEach(b => b.onclick = () => { libMode = b.dataset.lm; render(); });
   const body = document.getElementById('libBody');
   if (libMode === 'ingredients') {
-    body.innerHTML = `<button class="btn primary" id="newIng">+ New ingredient</button>
+    body.innerHTML = `<div class="btn-grid"><button class="btn primary" id="newIng">+ New ingredient</button><button class="btn blue" id="usdaIng">🔎 Add from USDA</button></div>
       <div class="card" style="margin-top:12px"><ul class="list">${S.ingredients.map(i => `<li><span class="name">${esc(i.name)}<br><span class="small muted">${i.kcalPerUnit} kcal per ${i.unitSize} ${esc(i.unit)}</span></span><button class="icon" data-edi="${i.id}">✎</button><button class="icon" data-deli="${i.id}">✕</button></li>`).join('') || '<li class="muted">No custom ingredients yet. Common foods (chicken, rice, apples…) are built in. Add your own here from a nutrition label.</li>'}</ul></div>`;
     document.getElementById('newIng').onclick = () => ingredientSheet();
+    document.getElementById('usdaIng').onclick = openUsdaSheet;
     body.querySelectorAll('[data-edi]').forEach(b => b.onclick = () => ingredientSheet(ingById(b.dataset.edi)));
     body.querySelectorAll('[data-deli]').forEach(b => b.onclick = async () => {
       const used = S.recipes.filter(r => r.items.some(it => it.ingId === b.dataset.deli));
@@ -1092,6 +1174,43 @@ function recipeSheet(rec) {
 
 // ---------- Settings ----------
 
+// ---------- Macros ----------
+const MACROS = [['protein', 'Protein', 4], ['carbs', 'Carbs', 4], ['fat', 'Fat', 9]];
+const MACRO_PRESETS = [['Balanced', 30, 40, 30], ['High protein', 40, 30, 30], ['Low carb', 35, 20, 45]]; // % of calories: P, C, F
+function macroTotals(date) { const fs = foodsOn(date); return Object.fromEntries(MACROS.map(([k]) => [k, fs.reduce((a, f) => a + (+f[k] || 0), 0)])); }
+function macroBarsHTML(date) {
+  const st = S.settings; if (!st.trackMacros) return '';
+  const t = macroTotals(date), g = st.macroGoalsOn ? st.macroGoals : null;
+  return `<div class="macros">${MACROS.map(([k, l]) => { const v = Math.round(t[k]), goal = g ? +g[k] || 0 : 0;
+    return `<div class="macro"><div class="small"><b>${l}</b></div><div class="small muted">${v}${goal ? ` / ${goal}` : ''} g</div>${goal ? `<div class="bar ${v > goal * 1.1 ? 'over' : ''}" style="height:8px;margin-top:4px"><div class="m-${k}" style="width:${Math.min(100, v / goal * 100)}%"></div></div>` : ''}</div>`; }).join('')}</div>`;
+}
+function macroSettingsHTML() {
+  const st = S.settings, g = st.macroGoals, kcal = Math.round(g.protein * 4 + g.carbs * 4 + g.fat * 9);
+  return `<div class="card"><h2>Macros</h2>
+    <div class="switch"><span>Track macros<br><span class="small muted">Show protein, carbs and fat on Home and in the food log</span></span><input type="checkbox" id="mTrack" ${st.trackMacros ? 'checked' : ''}></div>
+    ${st.trackMacros ? `<div class="switch"><span>Set macro goals</span><input type="checkbox" id="mGoalsOn" ${st.macroGoalsOn ? 'checked' : ''}></div>` : ''}</div>
+    ${st.trackMacros && st.macroGoalsOn ? `<div class="card"><h2>Daily macro goals</h2>
+      <div class="row">${MACROS.map(([k, l]) => `<div class="grow"><label style="margin-top:0">${l} (g)</label><input type="number" inputmode="numeric" data-mg="${k}" value="${g[k] || ''}"></div>`).join('')}</div>
+      <p class="small muted">That's ${kcal.toLocaleString()} kcal of your ${st.calorieGoal.toLocaleString()} kcal goal.</p>
+      <label>Or start from a split of your calorie goal</label>
+      <div class="chips">${MACRO_PRESETS.map(([n, p, c, f], i) => `<button class="chip" data-mp="${i}">${n} ${p}/${c}/${f}</button>`).join('')}</div></div>` : ''}`;
+}
+function bindMacroSettings() {
+  const st = S.settings, $ = id => document.getElementById(id);
+  if ($('mTrack')) $('mTrack').onchange = e => { st.trackMacros = e.target.checked; save(); render(); };
+  if ($('mGoalsOn')) $('mGoalsOn').onchange = e => {
+    st.macroGoalsOn = e.target.checked;
+    if (st.macroGoalsOn && !(st.macroGoals.protein || st.macroGoals.carbs || st.macroGoals.fat)) applyMacroPreset(0);
+    save(); render();
+  };
+  view.querySelectorAll('[data-mg]').forEach(i => i.onchange = () => { st.macroGoals = { ...st.macroGoals, [i.dataset.mg]: Math.max(0, Math.round(+i.value || 0)) }; save(); render(); });
+  view.querySelectorAll('[data-mp]').forEach(b => b.onclick = () => { applyMacroPreset(+b.dataset.mp); save(); render(); });
+}
+function applyMacroPreset(i) {
+  const [, p, c, f] = MACRO_PRESETS[i], k = S.settings.calorieGoal;
+  S.settings.macroGoals = { protein: Math.round(k * p / 100 / 4), carbs: Math.round(k * c / 100 / 4), fat: Math.round(k * f / 100 / 9) };
+}
+
 // ---------- Calorie calculator (same formulas as calculator.net) ----------
 // BMR: Mifflin-St Jeor. Maintenance = BMR × activity. 1 lb of body weight ≈ 3,500 kcal, 1 kg ≈ 7,700 kcal.
 const ACTIVITY = [
@@ -1124,18 +1243,20 @@ function applyAutoGoal() {
 }
 const SETTINGS_SECS = {
   account:  { label: 'Account', icon: '👤' },
+  macros:   { label: 'Macros', icon: '🥩', sub: 'Off' },
   goal:     { label: 'Calorie goal', icon: '🎯', sub: 'Body stats, maintenance, weekly budget' },
   fasting:  { label: 'Fasting', icon: '⏱️', sub: 'Schedule and streak' },
   meals:    { label: 'Meals', icon: '🍽️', sub: 'Which meals to show' },
   remind:   { label: 'Reminders', icon: '🔔', sub: 'Notifications and calendar' },
   look:     { label: 'Appearance', icon: '🎨', sub: 'Color palette' },
   units:    { label: 'Units', icon: '⚖️', sub: 'Imperial or metric' },
-  ai:       { label: 'AI photo logging', icon: '📷', sub: 'Gemini or Claude' },
+  ai:       { label: 'AI & food data', icon: '📷', sub: 'Gemini or Claude, USDA key' },
   data:     { label: 'Backup & data', icon: '🗄️', sub: 'Export, import, erase' },
 };
 function settingsMenuHTML() {
   const st = S.settings, c = calorieCalc(), th = THEMES[st.theme === 'auto' ? seasonNow() : st.theme] || THEMES.cocoa;
   const subs = {
+    macros: !st.trackMacros ? 'Off' : st.macroGoalsOn ? `P ${st.macroGoals.protein} · C ${st.macroGoals.carbs} · F ${st.macroGoals.fat} g` : 'Tracking, no goals',
     account: Cloud.signedIn() ? 'Signed in · syncing' : 'Optional · sign in to sync',
     goal: `${st.calorieGoal.toLocaleString()} kcal a day${st.autoGoal && c ? ' · auto' : ''}`,
     fasting: `${st.fastHours}:${24 - st.fastHours}${st.sameEveryDay ? ` · first meal ${hm12(st.eatStart)}` : ' · custom by day'}`,
@@ -1145,7 +1266,7 @@ function settingsMenuHTML() {
   };
   const row = k => `<button class="menu-row" data-sec-open="${k}"><span class="menu-ico">${SETTINGS_SECS[k].icon}</span><span class="grow"><span class="menu-label">${SETTINGS_SECS[k].label}</span><span class="menu-sub">${esc(subs[k] || SETTINGS_SECS[k].sub)}</span></span><svg class="menu-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>`;
   const group = (title, keys) => `${title ? `<div class="menu-head">${title}</div>` : ''}<div class="card menu">${keys.map(row).join('')}</div>`;
-  return group('', ['account']) + group('Goals', ['goal', 'fasting', 'meals']) + group('General', ['remind', 'look', 'units', 'ai']) + group('Data', ['data'])
+  return group('', ['account']) + group('Goals', ['goal', 'macros', 'fasting', 'meals']) + group('General', ['remind', 'look', 'units', 'ai']) + group('Data', ['data'])
     + `<p class="small center" style="color:var(--on-bg);opacity:.8;margin:6px 0 0">App version ${APP_VERSION}</p>`;
 }
 function goalCardHTML() {
@@ -1219,6 +1340,7 @@ function renderSettings() {
       <div class="btn-grid"><button class="btn" id="sNotif">Enable notifications</button><button class="btn" id="sIcs">📅 Add to calendar</button></div>
       <p class="small muted">Web apps can't schedule alerts while fully closed. The calendar option adds recurring reminders that match your schedule and always fire. Re-download it if you change your schedule.</p>
     </div></section>
+    <section data-sec="macros">${macroSettingsHTML()}</section>
     <section data-sec="meals"><div class="card"><h2>Meals to show</h2>
       ${MEALS.map(m => `<div class="switch"><span>${m.label}</span><input type="checkbox" data-meal="${m.id}" ${st.meals[m.id] ? 'checked' : ''}></div>`).join('')}
       <p class="small muted">After you log your last meal of the day (${mealLabel(lastMainMeal())}), you'll be asked to start your fast.</p></div></section>
@@ -1234,7 +1356,10 @@ function renderSettings() {
       <label>Gemini API key</label><input type="password" id="sGKey" value="${esc(st.geminiKey)}" placeholder="AIza…" autocomplete="off">
       <p class="small muted">Free key at aistudio.google.com (no card needed). Kept on this device (and in your account if you sign in) and sent only to Google. Free-tier photos may be used by Google to improve its products.</p>
       <label>Model</label><input id="sGModel" value="${esc(st.geminiModel)}" autocomplete="off" autocapitalize="off">
-      <p class="small muted">If this model is retired, the app switches to a current Flash model automatically.</p>`}</div></section>
+      <p class="small muted">If this model is retired, the app switches to a current Flash model automatically.</p>`}</div>
+    <div class="card"><h2>USDA food search</h2>
+      <label style="margin-top:0">USDA API key (optional)</label><input type="password" id="sUsda" value="${esc(st.usdaKey)}" placeholder="Uses a shared demo key if empty" autocomplete="off">
+      <p class="small muted">The shared key allows about 30 searches an hour. For more, get a free key instantly at api.data.gov/signup (just an email).</p></div></section>
     <section data-sec="account">${Cloud.cardHTML()}</section>
     <section data-sec="data"><div class="card"><h2>Data</h2><p class="small muted">${Cloud.signedIn() ? 'Saved on this phone and synced to your account.' : 'Everything is stored on this phone only. Export a backup now and then, or sign in under Account to sync.'}</p>
       <div class="btn-grid"><button class="btn" id="sExp">Export backup</button><button class="btn" id="sImpBtn">Import backup</button><input type="file" accept=".json,application/json,text/plain" id="sImp" class="visually-hidden"></div>
@@ -1242,7 +1367,7 @@ function renderSettings() {
   view.querySelectorAll('section[data-sec]').forEach(el => { if (el.dataset.sec !== sec) el.classList.add('hidden'); });
   view.querySelectorAll('[data-sec-open]').forEach(b => b.onclick = () => { settingsSec = b.dataset.secOpen; render(); window.scrollTo(0, 0); });
   if (sec) document.getElementById('secBack').onclick = () => { settingsSec = null; render(); window.scrollTo(0, 0); };
-  bindGoalCard();
+  bindGoalCard(); bindMacroSettings();
   const set = (k, v) => { st[k] = v; save(); };
   const bindEl = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
   document.getElementById('sPlan').onchange = e => { set('fastHours', +e.target.value); const f = activeFast(); if (f) { f.goalH = +e.target.value; save(); } render(); };
@@ -1261,6 +1386,7 @@ function renderSettings() {
   const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = fn; };
   bind('sKey', e => set('apiKey', e.target.value.trim()));
   bind('sModel', e => set('aiModel', e.target.value));
+  bind('sUsda', e => set('usdaKey', e.target.value.trim()));
   bind('sGKey', e => set('geminiKey', e.target.value.trim()));
   bind('sGModel', e => set('geminiModel', e.target.value.trim() || 'gemini-3.1-flash-lite'));
   view.querySelectorAll('[data-meal]').forEach(c => c.onchange = () => {
