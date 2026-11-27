@@ -3,7 +3,7 @@
 
 // ---------- Storage ----------
 const STORE_KEY = 'calcount_v1';
-const APP_VERSION = '30';
+const APP_VERSION = '31';
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'lunch', label: 'Lunch' },
@@ -272,6 +272,20 @@ function dayLabelFor(t) { const k = dayKey(t); return k === dayKey() ? 'today' :
 
 // ---------- Recipes ----------
 const ingById = id => S.ingredients.find(i => i.id === id);
+// Live "show the math" line under amount boxes: <input data-calc="kcalPer|perSize|unit" data-out="id">
+const fmtNum = n => (Math.round(n * 100) / 100).toLocaleString();
+function calcText(q, per, size, unit) {
+  q = +q || 0; const k = Math.round(q / (size || 1) * per);
+  if (unit === '×' || unit === 'srv') return `${fmtNum(q)} ${unit === 'srv' ? 'srv × ' : '× '}${fmtNum(Math.round(per))} kcal = ${k.toLocaleString()} kcal`;
+  return `${fmtNum(q)} ${unit} × ${fmtNum(Math.round(per * 10) / 10)} kcal/${size === 1 ? '' : fmtNum(size) + ' '}${unit} = ${k.toLocaleString()} kcal`;
+}
+let calcSeq = 0;
+function calcAttrs(q, per, size, unit) { const id = 'calc' + (++calcSeq); return { attrs: `data-calc="${per}|${size}|${esc(unit)}" data-out="${id}"`, out: `<span class="calc" id="${id}">${esc(calcText(q, per, size, unit))}</span>` }; }
+document.addEventListener('input', e => {
+  const el = e.target; if (!el.dataset || !el.dataset.calc) return;
+  const [per, size, unit] = el.dataset.calc.split('|'), o = document.getElementById(el.dataset.out);
+  if (o) o.textContent = calcText(el.value, +per, +size, unit);
+});
 function ingMacros(ing, qty) { const f = (+qty || 0) / (+ing.unitSize || 1); return ing.p != null ? { protein: ing.p * f, carbs: (ing.c || 0) * f, fat: (ing.f || 0) * f } : {}; }
 function ingKcal(ing, qty) { return ing ? (+qty || 0) / (+ing.unitSize || 1) * (+ing.kcalPerUnit || 0) : 0; }
 function recipeKcal(r) { return r.items.reduce((a, it) => a + ingKcal(ingById(it.ingId), it.qty), 0); }
@@ -641,7 +655,8 @@ function showScanned(it, state) {
     <div class="btn-grid" style="margin-top:12px"><button class="btn" id="scanAgain">Scan another</button><button class="btn primary" id="scAdd">Add</button></div>
     <p class="small muted center">Saved to your foods so you can find it by name next time. Data from Open Food Facts.</p>`;
   const grams = () => { const a = +document.getElementById('scAmt').value || 0; return unit === 'srv' ? a * it.srvG : a; };
-  const upd = () => { const v = per(grams()); document.getElementById('scK').textContent = Math.round(v.kcal); document.getElementById('scM').textContent = v.protein !== '' ? `P ${Math.round(v.protein)} g · C ${Math.round(v.carbs)} g · F ${Math.round(v.fat)} g` : ''; };
+  const upd = () => { const v = per(grams()); document.getElementById('scK').textContent = Math.round(v.kcal); const a = +document.getElementById('scAmt').value || 0;
+    document.getElementById('scM').textContent = (unit === 'srv' ? `${fmtNum(a)} srv × ${it.srvG} g = ${fmtNum(grams())} g → ` : '') + calcText(grams(), it.kcal100, 100, 'g') + (v.protein !== '' ? ` · P ${Math.round(v.protein)} g · C ${Math.round(v.carbs)} g · F ${Math.round(v.fat)} g` : ''); };
   document.getElementById('scAmt').oninput = upd;
   out.querySelectorAll('[data-su]').forEach(b => b.onclick = () => {
     if (b.dataset.su === unit) return;
@@ -693,14 +708,14 @@ function drawLibraryPick(el, state) {
   const list = document.getElementById('libList');
   const draw = q => {
     q = (q || '').toLowerCase().trim();
-    const recs = S.recipes.filter(r => r.name.toLowerCase().includes(q)).map(r => `<li><span class="name">🍲 ${esc(r.name)}<br><span class="small muted">${Math.round(recipePerServing(r))} kcal / serving</span></span><input type="number" inputmode="decimal" value="1" step="0.25" style="width:70px" data-r="${r.id}"><span class="small muted">srv</span><button class="btn small primary" data-addr="${r.id}">Add</button></li>`);
-    const ings = S.ingredients.filter(i => !i.common && i.name.toLowerCase().includes(q)).map(i => `<li><span class="name">🥕 ${esc(i.name)}<br><span class="small muted">${i.kcalPerUnit} kcal / ${i.unitSize} ${esc(i.unit)}</span></span><input type="number" inputmode="decimal" value="${i.unitSize}" style="width:70px" data-i="${i.id}"><span class="small muted">${esc(i.unit)}</span><button class="btn small primary" data-addi="${i.id}">Add</button></li>`);
-    const commons = searchCommon(q).map(f => `<li><span class="name">${esc(f.name)}<br><span class="small muted">${f.kcal} kcal/100 g · ${esc(f.srvLabel)} = ${f.srvG} g (${Math.round(f.kcal * f.srvG / 100)})</span></span><input type="number" inputmode="decimal" value="${f.srvG}" style="width:70px" data-c="${f.i}"><span class="small muted">g</span><button class="btn small primary" data-addc="${f.i}">Add</button></li>`);
-    const rests = searchRestaurants(q).map(r => `<li><span class="name">🍔 ${esc(r.item)}<br><span class="small muted">${esc(r.chain)} · ${r.kcal} kcal / ${esc(r.srv)}</span></span><input type="number" inputmode="decimal" value="1" step="0.5" style="width:60px" data-rq="${r.i}"><span class="small muted">×</span><button class="btn small primary" data-addrf="${r.i}">Add</button></li>`);
+    const recs = S.recipes.filter(r => r.name.toLowerCase().includes(q)).map(r => { const c = calcAttrs(1, recipePerServing(r), 1, 'srv'); return `<li><span class="name">🍲 ${esc(r.name)}<br><span class="small muted">${Math.round(recipePerServing(r))} kcal / serving</span>${c.out}</span><input type="number" inputmode="decimal" value="1" step="0.25" style="width:70px" data-r="${r.id}" ${c.attrs}><span class="small muted">srv</span><button class="btn small primary" data-addr="${r.id}">Add</button></li>`; });
+    const ings = S.ingredients.filter(i => !i.common && i.name.toLowerCase().includes(q)).map(i => { const c = calcAttrs(i.unitSize, i.kcalPerUnit, i.unitSize, i.unit); return `<li><span class="name">🥕 ${esc(i.name)}<br><span class="small muted">${i.kcalPerUnit} kcal / ${i.unitSize} ${esc(i.unit)}</span>${c.out}</span><input type="number" inputmode="decimal" value="${i.unitSize}" style="width:70px" data-i="${i.id}" ${c.attrs}><span class="small muted">${esc(i.unit)}</span><button class="btn small primary" data-addi="${i.id}">Add</button></li>`; });
+    const commons = searchCommon(q).map(f => { const c = calcAttrs(f.srvG, f.kcal, 100, 'g'); return `<li><span class="name">${esc(f.name)}<br><span class="small muted">${f.kcal} kcal/100 g · ${esc(f.srvLabel)} = ${f.srvG} g</span>${c.out}</span><input type="number" inputmode="decimal" value="${f.srvG}" style="width:70px" data-c="${f.i}" ${c.attrs}><span class="small muted">g</span><button class="btn small primary" data-addc="${f.i}">Add</button></li>`; });
+    const rests = searchRestaurants(q).map(r => { const c = calcAttrs(1, r.kcal, 1, '×'); return `<li><span class="name">🍔 ${esc(r.item)}<br><span class="small muted">${esc(r.chain)} · ${r.kcal} kcal / ${esc(r.srv)}</span>${c.out}</span><input type="number" inputmode="decimal" value="1" step="0.5" style="width:60px" data-rq="${r.i}" ${c.attrs}><span class="small muted">×</span><button class="btn small primary" data-addrf="${r.i}">Add</button></li>`; });
     const chips = !q ? `<li style="display:block;border:0"><div class="small muted" style="margin-bottom:6px">Restaurants</div><div class="chips">${RF_CHAINS.map(c => `<button class="chip" data-chain="${esc(c)}">${esc(c)}</button>`).join('')}</div></li>` : '';
     const usda = q ? `<li style="display:block;border:0;padding-top:12px"><button class="btn" id="usdaBtn">🔎 Search USDA for “${esc(q)}”</button><ul class="list" id="usdaOut"></ul></li>` : '';
     const ask = q && aiKey() ? `<li style="display:block;border:0;padding-top:12px"><button class="btn blue" id="askAI">✨ Look up “${esc(q)}” with AI</button><div id="askOut"></div></li>` : '';
-    list.innerHTML = (recs.concat(ings, rests, commons).join('') || `<li class="muted">${q ? `No matches in your foods.${aiKey() ? ' Try the AI lookup below, or Quick add.' : ' Try Quick add, or add an AI key in Settings to look up any food.'}` : 'Type to search your foods, restaurant menus and common foods.'}</li>`) + chips + usda + ask;
+    list.innerHTML = (recs.concat(ings, commons, rests).join('') || `<li class="muted">${q ? `No matches in your foods.${aiKey() ? ' Try the AI lookup below, or Quick add.' : ' Try Quick add, or add an AI key in Settings to look up any food.'}` : 'Type to search your foods, restaurant menus and common foods.'}</li>`) + chips + usda + ask;
     if (usda) document.getElementById('usdaBtn').onclick = () => showUsdaResults(document.getElementById('usdaOut'), q, state);
     list.querySelectorAll('[data-chain]').forEach(b => b.onclick = () => { const inp = document.getElementById('libSearch'); inp.value = b.dataset.chain; draw(inp.value); });
     list.querySelectorAll('[data-addrf]').forEach(b => b.onclick = () => { const r = RF[+b.dataset.addrf]; const n = +list.querySelector(`[data-rq="${r.i}"]`).value || 1; addFoods([{ name: `${r.chain} ${r.item}${n !== 1 ? ` (×${n})` : ''}`, kcal: r.kcal * n, protein: r.p * n, carbs: r.c * n, fat: r.f * n, source: 'restaurant' }], state.meal, state.date); });
@@ -751,8 +766,8 @@ async function showUsdaResults(out, q, state) {
   try {
     const rows = await usdaSearch(q);
     if (!rows.length) { out.innerHTML = '<li class="muted">No USDA matches. Try fewer or simpler words, like "salmon" or "brown rice".</li>'; return; }
-    out.innerHTML = rows.map((x, n) => `<li><span class="name">🇺🇸 ${esc(x.name)}<br><span class="small muted">${Math.round(x.kcal)} kcal/100 g${x.p != null ? ` · P ${Math.round(x.p)} C ${Math.round(x.c || 0)} F ${Math.round(x.f || 0)}` : ''}</span></span>
-      ${state ? `<input type="number" inputmode="decimal" value="100" style="width:70px" data-ug="${n}"><span class="small muted">g</span><button class="btn small primary" data-ua="${n}">Add</button>` : `<button class="btn small ${S.ingredients.some(i => i.fdcId === x.fdcId) ? '' : 'primary'}" data-us="${n}">${S.ingredients.some(i => i.fdcId === x.fdcId) ? 'Saved' : 'Save'}</button>`}</li>`).join('')
+    out.innerHTML = rows.map((x, n) => { const c = calcAttrs(100, x.kcal, 100, 'g'); return `<li><span class="name">🇺🇸 ${esc(x.name)}<br><span class="small muted">${Math.round(x.kcal)} kcal/100 g${x.p != null ? ` · P ${Math.round(x.p)} C ${Math.round(x.c || 0)} F ${Math.round(x.f || 0)}` : ''}</span>${state ? c.out : ''}</span>
+      ${state ? `<input type="number" inputmode="decimal" value="100" style="width:70px" data-ug="${n}" ${c.attrs}><span class="small muted">g</span><button class="btn small primary" data-ua="${n}">Add</button>` : `<button class="btn small ${S.ingredients.some(i => i.fdcId === x.fdcId) ? '' : 'primary'}" data-us="${n}">${S.ingredients.some(i => i.fdcId === x.fdcId) ? 'Saved' : 'Save'}</button>`}</li>`; }).join('')
       + '<li class="small muted" style="border:0">From USDA FoodData Central. Anything you log or save is kept in Ingredients.</li>';
     out.querySelectorAll('[data-ua]').forEach(b => b.onclick = () => {
       const x = rows[+b.dataset.ua], g = +out.querySelector(`[data-ug="${b.dataset.ua}"]`).value || 0, ing = saveUsdaIngredient(x);
@@ -1227,7 +1242,7 @@ function recipeSheet(rec) {
       <label>Name</label><input id="rN" value="${esc(r.name)}" placeholder="e.g. Turkey chili">
       <label>Servings it makes</label><input id="rS" type="number" inputmode="decimal" value="${r.servings}">
       <h3 style="margin-top:14px">Ingredients</h3>
-      <ul class="list">${r.items.map((it, n) => { const ing = ingById(it.ingId); return `<li><span class="name">${esc(ing?.name || '?')}</span><input type="number" inputmode="decimal" value="${it.qty}" data-q="${n}" style="width:70px"><span class="small muted">${esc(ing?.unit || '')}</span><span class="kcal" style="width:60px;text-align:right">${Math.round(ingKcal(ing, it.qty))}</span><button class="icon" data-rm="${n}">✕</button></li>`; }).join('') || '<li class="muted small">No ingredients added</li>'}</ul>
+      <ul class="list">${r.items.map((it, n) => { const ing = ingById(it.ingId); const c = ing ? calcAttrs(it.qty, ing.kcalPerUnit, ing.unitSize, ing.unit) : { attrs: '', out: '' }; return `<li><span class="name">${esc(ing?.name || '?')}${c.out}</span><input type="number" inputmode="decimal" value="${it.qty}" data-q="${n}" style="width:70px" ${c.attrs}><span class="small muted">${esc(ing?.unit || '')}</span><span class="kcal" style="width:60px;text-align:right">${Math.round(ingKcal(ing, it.qty))}</span><button class="icon" data-rm="${n}">✕</button></li>`; }).join('') || '<li class="muted small">No ingredients added</li>'}</ul>
       <div style="margin-top:8px"><input id="rSearch" placeholder="Add ingredient: search foods…" autocomplete="off"><ul class="list" id="rResults"></ul></div>
       <div class="row between" style="margin-top:12px"><span class="muted">Total ${Math.round(recipeKcal(r))} kcal</span><b>${Math.round(recipePerServing(r))} kcal / serving</b></div>
       <button class="btn primary" id="rSave" style="margin-top:14px">Save recipe</button>`);

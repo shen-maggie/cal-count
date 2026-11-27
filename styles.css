@@ -232,3 +232,5 @@ input::-webkit-date-and-time-value { text-align: left; }
 .badge.got { border: 1.5px solid var(--ink); background: var(--berry-soft); box-shadow: 2px 2px 0 var(--ink); }
 .badge.got .b-ico { filter: none; opacity: 1; }
 .badge.got .b-name { color: var(--text); }
+.calc { display: block; font-size: 12.5px; color: var(--accent-ink); font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+:root[data-theme="winter"] .calc, :root[data-theme="autumn"] .calc { color: var(--text); }
